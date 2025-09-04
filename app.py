@@ -40,9 +40,20 @@ def get_database_connection():
             db_host = st.secrets["db_credentials"]["host"]
             db_name = st.secrets["db_credentials"]["database"]
             uri = f"mysql+pymysql://{db_user}:{db_pass}@{db_host}/{db_name}"
+
+            # << CAMBIO CLAVE AQUÍ >>
+            # Añadimos argumentos al motor de SQLAlchemy para manejar timeouts de conexión.
+            # Esto evita el error "MySQL server has gone away".
+            engine_args = {
+                "pool_recycle": 3600,  # Recicla conexiones cada 3600 seg (1 hora)
+                "pool_pre_ping": True  # Verifica si la conexión está viva antes de usarla
+            }
             
-            # Conectamos especificando ÚNICAMENTE la tabla "ventus"
-            db = SQLDatabase.from_uri(uri, include_tables=["ventus"]) 
+            db = SQLDatabase.from_uri(
+                uri, 
+                include_tables=["ventus"], 
+                engine_args=engine_args  # <-- Pasamos los nuevos argumentos aquí
+            ) 
             
             st.success("✅ Conexión a la base de datos establecida.")
             return db
@@ -357,4 +368,5 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 
 
             st.session_state.messages.append({"role": "assistant", "content": res})
+
 
