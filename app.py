@@ -24,7 +24,7 @@ with col1:
 
 with col2:
     st.title("IANA: Tu Asistente IA para Análisis de Datos")
-    st.markdown("Soy la red de agentes IA de **Ventus**. Hazme una pregunta sobre los datos de **proyectos, infraestructura o energía**.")
+    st.markdown("Soy la red de agentes IA de **VENTUS**. Hazme una pregunta sobre los datos del proyecto IGUANA.")
 
 # ============================================
 # 1) Conexión a la Base de Datos y LLMs (con caché para eficiencia)
@@ -355,4 +355,5 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 st.markdown("### 🧠 Análisis de IANA para Ventus") 
                 st.markdown(res["analisis"])
                 
+
             st.session_state.messages.append({"role": "assistant", "content": res})
