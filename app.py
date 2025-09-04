@@ -126,8 +126,6 @@ def _df_preview(df: pd.DataFrame, n: int = 20) -> str:
 def ejecutar_sql_real(pregunta_usuario: str):
     st.info("🤖 Entendido. El agente de datos de IANA está traduciendo tu pregunta a SQL...")
     
-    # << VERSIÓN FINAL DEL PROMPT >>
-    # Ahora que los campos son DECIMAL, eliminamos la regla de CAST. El prompt es más limpio.
     prompt_con_instrucciones = f"""
     Tu tarea es generar una consulta SQL **únicamente contra la tabla 'ventus'** para responder la pregunta del usuario.
     
@@ -147,25 +145,25 @@ def ejecutar_sql_real(pregunta_usuario: str):
     - `Proveedor` (Texto, Categoría para agrupar)
     - `Moneda` (Texto, Ej: 'COP', 'USD')
     - `Descripcion_Linea` (Texto)
-    - `Subtotal_COP` (DECIMAL) <- Numérico. Listo para sumar.
-    - `IVA_COP` (DECIMAL) <- Numérico. Listo para sumar.
-    - `Total_COP` (DECIMAL) <- Numérico. Métrica clave de costo.
-    - `SubTotal_USD` (DECIMAL) <- Numérico. Listo para sumar.
-    - `IVA_USD` (DECIMAL) <- Numérico. Listo para sumar.
-    - `Total_USD` (DECIMAL) <- Numérico. Métrica clave de costo.
+    - `Subtotal_COP` (DECIMAL)
+    - `IVA_COP` (DECIMAL)
+    - `Total_COP` (DECIMAL) <- Métrica clave de costo.
+    - `SubTotal_USD` (DECIMAL)
+    - `IVA_USD` (DECIMAL)
+    - `Total_USD` (DECIMAL) <- Métrica clave de costo.
     - `Comentarios` (Texto)
     - `Condicion_de_pago` (Texto)
     - `Condiciones_Comerciales` (Texto)
     - `Comprador` (Texto, Categoría para agrupar)
-    - `Cantidad` (DECIMAL) <- Numérico. Listo para sumar.
+    - `Cantidad` (DECIMAL)
     - `Cluster` (Texto, Categoría)
     - `Producto` (Texto, Aquí está el campo más importante donde se indentifica el trabajo realizado en el proyecto, ej: Transporte de materiales, Bultos de Cemento, Bolsas de basura, etc...)
     - `Grupo_Producto` (Texto, Categoría para agrupar)
     - `Familia` (Texto, Categoría para agrupar)
     - `Tipo` (Texto, Categoría para agrupar)
 
-    REGLA 3 (Agrupación): Presta mucha atención a palabras como 'diariamente' (GROUP BY Fecha_aprobacion), 'mensual' (GROUP BY MONTH(Fecha_aprobacion), YEAR(Fecha_aprobacion)), 'por Tipo', 'por Proveedor', 'por Comprador', 'por Familia', etc.
-    REGLA 4 (LIMIT): Nunca agregues un 'LIMIT'.
+    REGLA 3 (Agrupación): Presta mucha atención a palabras como 'diariamente', 'mensual', etc.
+    REGLA 4 (LIMIT): Nunca, bajo ninguna circunstancia, agregues un 'LIMIT' al final de la consulta.
     
     Pregunta original: "{pregunta_usuario}"
     """
@@ -173,14 +171,25 @@ def ejecutar_sql_real(pregunta_usuario: str):
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query = query_chain.invoke({"question": prompt_con_instrucciones})
         
+        # Limpieza estándar de ```sql
         sql_query = re.sub(r"^\s*```sql\s*|\s*```\s*$", "", sql_query, flags=re.IGNORECASE).strip()
 
-        st.code(sql_query, language='sql')
+        # << SOLUCIÓN LIMIT (AQUÍ ESTÁ LA MAGIA) >>
+        # A la IA se le ordenó no usar LIMIT, pero lo hizo de todos modos (como vimos en tu log).
+        # Así que, ahora eliminamos a la fuerza cualquier cláusula "LIMIT [numero]" que haya agregado al final.
+        sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query, flags=re.IGNORECASE | re.DOTALL).strip()
+
+        # Mostramos la consulta que REALMENTE vamos a ejecutar (la limpia)
+        st.code(sql_query_limpia, language='sql')
+        
         with st.spinner("⏳ Ejecutando la consulta en la base de datos..."):
             with db._engine.connect() as conn:
-                df = pd.read_sql(text(sql_query), conn)
+                # Ejecutamos la consulta LIMPIA, sin el LIMIT
+                df = pd.read_sql(text(sql_query_limpia), conn)
+                
         st.success("✅ ¡Consulta ejecutada!")
-        return {"sql": sql_query, "df": df}
+        return {"sql": sql_query_limpia, "df": df} # Devolvemos los datos limpios
+    
     except Exception as e:
         st.warning(f"❌ Error en la consulta directa. Intentando un método alternativo... Error: {e}")
         return {"sql": None, "df": None, "error": str(e)}
@@ -378,6 +387,7 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 
 
             st.session_state.messages.append({"role": "assistant", "content": res})
+
 
 
 
