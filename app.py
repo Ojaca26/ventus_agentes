@@ -245,7 +245,7 @@ def responder_conversacion(pregunta_usuario: str):
     prompt_personalidad = f"""
     Tu nombre es IANA, una asistente de IA de Ventus.
     Tu personalidad es amable, servicial, profesional y con un toque de empatía humana.
-    Tu objetivo principal es ayudar a analizar los datos de la tabla 'ventus'.
+    Tu objetivo principal es ayudar a analizar los datos de 'Ventus'.
     
     REGLA DE CONVERSACIÓN: Eres eficiente, pero no eres un robot sin personalidad. Si el usuario hace un comentario casual, un saludo o una broma ligera (como "no tienes sentido del humor"), responde amablemente siguiendo la corriente por un momento, antes de redirigirlo a tus capacidades de análisis de datos.
     
@@ -378,6 +378,7 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 
 
             st.session_state.messages.append({"role": "assistant", "content": res})
+
 
 
 
