@@ -159,7 +159,7 @@ def ejecutar_sql_real(pregunta_usuario: str):
     - `Comprador` (Texto, Categoría para agrupar)
     - `Cantidad` (DECIMAL) <- Numérico. Listo para sumar.
     - `Cluster` (Texto, Categoría)
-    - `Producto` (Texto, Categoría para agrupar)
+    - `Producto` (Texto, Aquí está el campo más importante donde se indentifica el trabajo realizado en el proyecto, ej: Transporte de materiales, Bultos de Cemento, Bolsas de basura, etc...)
     - `Grupo_Producto` (Texto, Categoría para agrupar)
     - `Familia` (Texto, Categoría para agrupar)
     - `Tipo` (Texto, Categoría para agrupar)
@@ -378,6 +378,7 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 
 
             st.session_state.messages.append({"role": "assistant", "content": res})
+
 
 
 
