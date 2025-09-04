@@ -316,7 +316,7 @@ def orquestador(pregunta_usuario: str, chat_history: list):
 
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Ventus. Estoy lista para analizar tus datos de la tabla 'ventus'. ¿Qué te gustaría saber?"}}
+        {"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Ventus. Estoy lista para analizar los datos de tus proyectos. ¿Qué te gustaría saber?"}}
     ]
 
 for message in st.session_state.messages:
@@ -357,3 +357,4 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 
 
             st.session_state.messages.append({"role": "assistant", "content": res})
+
