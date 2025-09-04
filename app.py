@@ -223,28 +223,49 @@ def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str):
 def analizar_con_datos(pregunta_usuario: str, datos_texto: str, df: pd.DataFrame | None):
     st.info("\n🧠 Ahora, el analista experto de IANA está examinando los datos...")
     
+    # << ESTE ES EL PROMPT DE ANÁLISIS COMPLETO (reemplaza tu versión anterior) >>
+    # Este prompt obliga a la IA a seguir tus instrucciones específicas 
+    # de Pareto, concentración, promedios y el formato ejecutivo con emojis.
+    # También aumenté el preview de 20 a 30 filas para darle más contexto.
+    
     prompt_analisis = f"""
-    Tu nombre es IANA. Eres un analista de datos senior en Ventus, experto en proyectos de infraestructura, energía e industriales.
-    Tu tarea es generar un análisis ejecutivo, breve y fácil de leer para un gerente de proyecto o director de área.
-    Responde siempre en español.
+    Eres IANA, analista de datos senior en Ventus. Tu tarea es realizar un análisis ejecutivo rápido sobre los datos proporcionados.
+    
+    Pregunta Original del Usuario: {pregunta_usuario}
+    
+    Datos para tu análisis (preview de las primeras 30 filas):
+    {_df_preview(df, 30)}
 
-    REGLAS DE FORMATO MUY IMPORTANTES:
-    1.  Inicia con el título: "Análisis Ejecutivo de Datos para Ventus".
-    2.  Debajo del título, presenta tus conclusiones como una lista de ítems (viñetas con markdown `-`).
-    3.  Cada ítem debe ser una oración corta, clara y directa al punto.
-    4.  Limita el análisis a un máximo de 5 ítems clave; si el cliente especifica una cantidad de ítems, genera el número exacto que pidió.
-    5.  No escribas párrafos largos.
+    ---
+    INSTRUCCIONES DE ANÁLISIS OBLIGATORIAS:
+    Sigue estos pasos para analizar la tabla de resultados (costos, métricas, etc.):
+    1. Calcular totales (ej. SUM(Total_COP) o SUM(Cantidad)) y porcentajes clave (ej. participación de los 5 items más grandes, distribución por 'Tipo' o 'Proveedor', % acumulado si aplica).
+    2. Detectar concentración (Principio de Pareto): ¿Pocos registros (ej. 20% de los proveedores/productos) explican una gran parte del total (ej. 80% del costo)?
+    3. Identificar patrones temporales (basado en 'Fecha_aprobacion'): ¿Hay días o periodos (ej. fin de mes) con concentración inusual de gastos o actividad?
+    4. Analizar dispersión: Calcula el "ticket promedio" (Costo Total / Cantidad Total, o Costo Total / # de Registros). Compara los valores más grandes contra los más pequeños.
 
-    Pregunta del usuario: {pregunta_usuario}
-    Datos disponibles para tu análisis (columnas clave: Total_COP, Total_USD, Proveedor, Comprador, Tipo, Familia, Fecha_aprobacion):
-    {_df_preview(df, 20)}
+    ---
+    FORMATO DE ENTREGA OBLIGATORIO:
+    Entrega el resultado EXACTAMENTE en estos 2 bloques. Usa frases cortas en bullets. Sé muy breve, directo y diciente para un gerente.
 
-    Ahora, genera el análisis siguiendo estrictamente las reglas de formato.
+    📌 Resumen Ejecutivo:
+    - (Aquí van los hallazgos principales y patrones detectados, con números clave. Ej: "El 80% del costo se concentra en solo 3 proveedores.")
+    - (Bullet point 2 del hallazgo principal.)
+    - (Bullet point 3 del hallazgo principal. Si no hay más, no agregues bullets vacíos.)
+
+    🔍 Números de referencia:
+    - (Bullet point con el Total General. Ej: "Costo Total (COP): $XX.XXX.XXX")
+    - (Bullet point con el Promedio. Ej: "Costo Promedio por Transacción: $XX.XXX")
+    - (Bullet point con el ratio de concentración. Ej: "Top 5 Productos representan: XX% del total.")
+
+    ⚠ Importante: No describas lo obvio de la tabla (como "la tabla muestra proveedores"). Ve directo a los números y al insight.
     """
-    with st.spinner("💡 Generando análisis y recomendaciones..."):
+    
+    with st.spinner("💡 Generando análisis y recomendaciones avanzadas..."):
         analisis = llm_analista.invoke(prompt_analisis).content
     st.success("💡 ¡Análisis completado!")
     return analisis
+
 
 def responder_conversacion(pregunta_usuario: str):
     """Activa el modo conversacional de IANA."""
@@ -387,6 +408,7 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 
 
             st.session_state.messages.append({"role": "assistant", "content": res})
+
 
 
 
