@@ -97,9 +97,43 @@ def get_sql_agent(_llm, _db):
 agente_sql = get_sql_agent(llm_sql, db)
 
 # ============================================
+# NUEVA FUNCIÓN AUXILIAR DE MEMORIA
+# ============================================
+def get_history_text(chat_history: list, n_turns=3) -> str:
+    """Extrae el texto de las últimas N vueltas del historial de chat."""
+    
+    if not chat_history or len(chat_history) <= 1:
+        return ""
+
+    history_text = []
+    # Itera hacia atrás, saltando el último mensaje (la consulta actual del usuario)
+    # Buscamos n_turns * 2 mensajes (pares de usuario/asistente)
+    relevant_history = chat_history[-(n_turns * 2 + 1) : -1]
+
+    for msg in relevant_history:
+        content = msg.get("content", {})
+        text_content = ""
+        
+        # El contenido puede ser un dict (para IANA o usuario procesado) o str (para usuario inicial)
+        if isinstance(content, dict):
+            text_content = content.get("texto", "") 
+        elif isinstance(content, str):
+            text_content = content
+        
+        if text_content:
+            role = "Usuario" if msg["role"] == "user" else "IANA"
+            history_text.append(f"{role}: {text_content}")
+
+    if not history_text:
+        return ""
+    
+    # Devuelve el contexto formateado
+    return "\n--- Contexto de Conversación Anterior (Últimas 3 vueltas) ---\n" + "\n".join(history_text) + "\n--- Fin del Contexto ---\n"
+
+
+# ============================================
 # 2) Funciones de Agentes (Lógica Principal)
 # ============================================
-
 def markdown_table_to_df(texto: str) -> pd.DataFrame:
     """Convierte una tabla en formato Markdown a un DataFrame de pandas."""
     lineas = [l.strip() for l in texto.splitlines() if l.strip().startswith('|')]
@@ -128,6 +162,9 @@ def ejecutar_sql_real(pregunta_usuario: str):
     
     prompt_con_instrucciones = f"""
     Tu tarea es generar una consulta SQL **únicamente contra la tabla 'ventus'** para responder la pregunta del usuario.
+    Debes usar el contexto de la conversación anterior para resolver pronombres o preguntas de seguimiento (ej. "ese proveedor", "esos productos", "cuántos fueron").
+
+    {hist_text}
     
     REGLA 1: La única tabla que debes usar es "ventus".
     REGLA 2: Los campos de costo y cantidad (Total_COP, Total_USD, Cantidad, etc.) YA SON numéricos (DECIMAL). 
@@ -164,9 +201,9 @@ def ejecutar_sql_real(pregunta_usuario: str):
 
     REGLA 3 (Agrupación): Presta mucha atención a palabras como 'diariamente', 'mensual', etc.
     REGLA 4 (LIMIT): Nunca, bajo ninguna circunstancia, agregues un 'LIMIT' al final de la consulta.
-    
-    Pregunta original: "{pregunta_usuario}"
-    """
+
+    Pregunta original del usuario (actual): "{pregunta_usuario}"
+    """    
     try:
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query = query_chain.invoke({"question": prompt_con_instrucciones})
@@ -174,9 +211,7 @@ def ejecutar_sql_real(pregunta_usuario: str):
         # Limpieza estándar de ```sql
         sql_query = re.sub(r"^\s*```sql\s*|\s*```\s*$", "", sql_query, flags=re.IGNORECASE).strip()
 
-        # << SOLUCIÓN LIMIT (AQUÍ ESTÁ LA MAGIA) >>
-        # A la IA se le ordenó no usar LIMIT, pero lo hizo de todos modos (como vimos en tu log).
-        # Así que, ahora eliminamos a la fuerza cualquier cláusula "LIMIT [numero]" que haya agregado al final.
+        # Forzamos la eliminación del LIMIT.
         sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query, flags=re.IGNORECASE | re.DOTALL).strip()
 
         # Mostramos la consulta que REALMENTE vamos a ejecutar (la limpia)
@@ -195,22 +230,25 @@ def ejecutar_sql_real(pregunta_usuario: str):
         return {"sql": None, "df": None, "error": str(e)}
 
 
-def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str):
+def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 La consulta directa falló. Activando el agente SQL experto de IANA como plan B.")
     
     prompt_sql = (
-        "Tu tarea es responder la pregunta del usuario consultando la base de datos. "
-        "La tabla se llama 'ventus'. " # Añadimos contexto extra por si acaso
+        "Tu tarea es responder la pregunta del usuario consultando la base de datos (tabla 'ventus'). "
+        "Debes usar el contexto de la conversación anterior para resolver pronombres o preguntas de seguimiento (ej. 'esos', 'ese proveedor')."
+        f"{hist_text}"
         "Debes devolver ÚNICAMENTE una tabla de datos en formato Markdown. "
-        "REGLA CRÍTICA: Devuelve SIEMPRE TODAS las filas de datos que encuentres. NUNCA resumas, trunques ni expliques los resultados. No agregues texto como 'Se muestran las 10 primeras filas' o 'Aquí está la tabla'. "
-        "REGLA NUMÉRICA: Columnas como Total_COP, Total_USD y Cantidad ya son numéricas (DECIMAL) y se pueden sumar directamente. "
+        "REGLA CRÍTICA 1: Devuelve SIEMPRE TODAS las filas de datos que encuentres. NUNCA resumas, trunques ni expliques los resultados. "
+        "REGLA CRÍTICA 2 (MUY IMPORTANTE): El SQL que generes internamente NO DEBE CONTENER 'LIMIT'. Debes devolver todos los resultados."
+        "REGLA NUMÉRICA: Columnas como Total_COP y Cantidad ya son numéricas (DECIMAL). "
         "Responde siempre en español. "
-        "Pregunta del usuario: "
+        "\nPregunta actual del usuario: "
         f"{pregunta_usuario}"
     )
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda en lenguaje natural..."):
-            res = agente_sql.invoke(prompt_sql)
+            # Pasamos el prompt completo al agente
+            res = agente_sql.invoke(prompt_sql) 
             texto = res["output"] if isinstance(res, dict) and "output" in res else str(res)
         st.info("📝 Recibí una respuesta en texto. Intentando convertirla en una tabla de datos...")
         df_md = markdown_table_to_df(texto)
@@ -287,10 +325,11 @@ def responder_conversacion(pregunta_usuario: str):
     NO intentes generar código SQL. Solo responde de forma conversacional.
     Responde siempre en español.
 
+    {hist_text}
+
     Pregunta del usuario: "{pregunta_usuario}"
     """
     respuesta = llm_analista.invoke(prompt_personalidad).content
-    # Usamos la clave "texto" para la respuesta principal y "analisis" como nulo.
     return {"texto": respuesta, "df": None, "analisis": None}
 
 
@@ -307,27 +346,36 @@ def clasificar_intencion(pregunta: str) -> str:
     clasificacion = llm_orq.invoke(prompt_orq).content.strip().lower().replace('"', '').replace("'", "")
     return clasificacion
 
-def obtener_datos_sql(pregunta_usuario: str) -> dict:
-    res_real = ejecutar_sql_real(pregunta_usuario)
+
+def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
+    # Pasamos el historial a ambos planes
+    res_real = ejecutar_sql_real(pregunta_usuario, hist_text)
+    
     if res_real.get("df") is not None and not res_real["df"].empty:
         return {"sql": res_real["sql"], "df": res_real["df"], "texto": None}
     
-    # Si la consulta directa falla (quizás por un error de SQL), probamos el agente general
-    res_nat = ejecutar_sql_en_lenguaje_natural(pregunta_usuario)
+    # Si Plan A falla, Plan B también recibe el historial
+    res_nat = ejecutar_sql_en_lenguaje_natural(pregunta_usuario, hist_text)
     return {"sql": None, "df": res_nat["df"], "texto": res_nat["texto"]}
 
 
 def orquestador(pregunta_usuario: str, chat_history: list):
     with st.expander("⚙️ Ver Proceso de IANA", expanded=False):
         st.info(f"🚀 Recibido: '{pregunta_usuario}'")
+        
+        # << CAMBIO DE MEMORIA >>
+        # Generamos el texto del historial UNA VEZ para pasarlo a todos los agentes.
+        hist_text = get_history_text(chat_history, n_turns=3) # Usamos 3 niveles como sugeriste
+        
         with st.spinner("🔍 IANA está analizando tu pregunta..."):
             clasificacion = clasificar_intencion(pregunta_usuario)
         st.success(f"✅ ¡Intención detectada! Tarea: {clasificacion.upper()}.")
 
         if clasificacion == "conversacional":
-            return responder_conversacion(pregunta_usuario)
+            # Pasamos el historial al agente conversacional
+            return responder_conversacion(pregunta_usuario, hist_text)
 
-        # --- Lógica de Memoria para Análisis de Contexto ---
+        # --- INICIO DE LA LÓGICA DE MEMORIA DE DATAFRAME (Esto sigue igual) ---
         if clasificacion == "analista":
             palabras_clave_contexto = [
                 "esto", "esos", "esa", "información", 
@@ -336,30 +384,33 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             es_pregunta_de_contexto = any(palabra in pregunta_usuario.lower() for palabra in palabras_clave_contexto)
 
             if es_pregunta_de_contexto and len(chat_history) > 1:
-                mensaje_anterior = chat_history[-2] # El penúltimo mensaje (la respuesta previa de IANA)
+                mensaje_anterior = chat_history[-2]
                 
                 if mensaje_anterior["role"] == "assistant" and "df" in mensaje_anterior["content"]:
                     df_contexto = mensaje_anterior["content"]["df"]
                     
                     if df_contexto is not None and not df_contexto.empty:
                         st.info("💡 Usando datos de la conversación anterior para el análisis...")
-                        analisis = analizar_con_datos(pregunta_usuario, "Datos de la tabla anterior.", df_contexto)
-                        # Devolvemos la tabla anterior junto con el nuevo análisis
+                        # El analista también recibe el contexto de texto Y el DF anterior
+                        analisis = analizar_con_datos(pregunta_usuario, hist_text, df_contexto)
                         return {"tipo": "analista", "df": df_contexto, "texto": None, "analisis": analisis}
-        # --- Fin Lógica de Memoria ---
+        # --- FIN DE LA LÓGICA DE MEMORIA DE DATAFRAME ---
 
-        # Flujo normal (Consulta o Análisis nuevo)
-        res_datos = obtener_datos_sql(pregunta_usuario)
+        # Si no es una pregunta de contexto, sigue el flujo normal
+        # Pasamos el historial a los agentes SQL
+        res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
         resultado = {"tipo": clasificacion, **res_datos, "analisis": None}
         
         if clasificacion == "analista":
             if res_datos.get("df") is not None and not res_datos["df"].empty:
-                analisis = analizar_con_datos(pregunta_usuario, res_datos.get("texto", ""), res_datos["df"])
+                # El analista recibe el contexto de texto y el NUEVO DF
+                analisis = analizar_con_datos(pregunta_usuario, hist_text, res_datos["df"])
                 resultado["analisis"] = analisis
             else:
                 resultado["texto"] = "Para poder realizar un análisis, primero necesito datos. Por favor, haz una pregunta más específica para obtener la información que quieres analizar."
                 resultado["df"] = None
     return resultado
+
 
 # ============================================
 # 3) Interfaz de Chat de Streamlit
@@ -408,6 +459,7 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                 
 
             st.session_state.messages.append({"role": "assistant", "content": res})
+
 
 
 
