@@ -18,6 +18,7 @@ st.set_page_config(page_title="IANA para Ventus", page_icon="logo_ventus.png", l
 col1, col2 = st.columns([1, 4]) 
 
 with col1:
+    # Asegúrate de tener un archivo "logo_ventus.png" en la misma carpeta
     st.image("logo_ventus.png", width=120) 
 
 with col2:
@@ -129,6 +130,24 @@ def _df_preview(df: pd.DataFrame, n: int = 20) -> str:
     try: return df.head(n).to_markdown(index=False)
     except Exception: return df.head(n).to_string(index=False)
 
+def interpretar_resultado_sql(res: dict) -> dict:
+    """
+    Si el resultado de una consulta es una tabla 1x1, extrae el valor
+    y lo añade como texto para que la respuesta sea más directa.
+    """
+    df = res.get("df")
+    # Solo actuar si no hay ya un texto de respuesta
+    if df is not None and not df.empty and res.get("texto") is None:
+        # Comprobar si el DataFrame tiene exactamente una fila y una columna
+        if df.shape == (1, 1):
+            valor = df.iloc[0, 0]
+            # Extraer el nombre de la columna para dar más contexto
+            nombre_columna = df.columns[0]
+            # Crear un texto de respuesta claro
+            res["texto"] = f"La respuesta para '{nombre_columna}' es: **{valor}**"
+            st.info("💡 Resultado numérico interpretado para una respuesta directa.")
+    return res
+
 # ============================================
 # Funciones de Agentes
 # ============================================
@@ -140,7 +159,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     {hist_text}
     REGLA 1: La única tabla que debes usar es "ventus".
     REGLA 2: Los campos de costo y cantidad (Total_COP, Total_USD, Cantidad) YA SON numéricos. Puedes usarlos directamente con SUM(), AVG(), etc.
-    REGLA 3: Presta atención a palabras como 'diariamente', 'mensual', etc. para agrupar fechas.
+    REGLA 3: Presta atención a palabras como 'diariamente', 'mensual', etc. para agrupar por `Fecha_aprobacion`.
     REGLA 4: NUNCA agregues un 'LIMIT' al final de la consulta.
     Pregunta original del usuario: "{pregunta_usuario}"
     """    
@@ -282,7 +301,6 @@ def validar_y_corregir_respuesta(pregunta_usuario: str, respuesta_iana: dict, hi
         return {"aprobado": False, "feedback": f"Excepción durante la validación: {e}"}
 
 def clasificar_intencion(pregunta: str) -> str:
-    # Esta es la versión completa y robusta de la función
     prompt_orq = f"""
     Devuelve UNA sola palabra: `consulta`, `analista` o `conversacional` según la intención del usuario.
     Mensaje: {pregunta}
@@ -301,7 +319,6 @@ def clasificar_intencion(pregunta: str) -> str:
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
-    # Esta es la función completa
     res_real = ejecutar_sql_real(pregunta_usuario, hist_text)
     if res_real.get("df") is not None and not res_real["df"].empty:
         return {"sql": res_real["sql"], "df": res_real["df"], "texto": None}
@@ -318,7 +335,6 @@ def orquestador(pregunta_usuario: str, chat_history: list):
         clasificacion = clasificar_intencion(pregunta_usuario)
         st.success(f"✅ ¡Intención detectada! Tarea: {clasificacion.upper()}.")
         
-        # Preparamos una variable `res` inicial
         res = {"tipo": clasificacion, "df": None, "texto": None, "analisis": None}
 
         for intento in range(MAX_INTENTOS):
@@ -327,15 +343,20 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             if intento == 0:
                 if clasificacion == "conversacional":
                     res = responder_conversacion(pregunta_usuario, hist_text)
-                else: # consulta o analista
+                else: 
                     res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
                     res.update(res_datos)
+                    res = interpretar_resultado_sql(res)
                     if clasificacion == "analista" and res.get("df") is not None and not res["df"].empty:
                         res["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res["df"])
-            else: # Reintentos con feedback
-                st.info(f"🔄 Regenerando respuesta con base en el feedback...")
+            else: 
+                st.info(f"🔄 Regenerando respuesta con base en el feedback: '{feedback_previo}'")
                 if clasificacion == "conversacional":
                     res = responder_conversacion(pregunta_usuario, hist_text, feedback=feedback_previo)
+                elif clasificacion == "consulta":
+                    res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
+                    res.update(res_datos)
+                    res = interpretar_resultado_sql(res)
                 elif clasificacion == "analista":
                     res["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res.get("df"), feedback=feedback_previo)
 
@@ -347,7 +368,7 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             else:
                 feedback_previo = resultado_validacion["feedback"]
                 if intento == MAX_INTENTOS - 1:
-                    st.error("❗ Lo siento, he intentado corregir mi respuesta pero sigo sin poder darte un resultado preciso. ¿Podrías reformular tu pregunta?")
+                    st.error("Lo siento, mi respuesta no fue satisfactoria incluso después de una corrección. Por favor, intenta reformular tu pregunta.")
                     respuesta_final = {"tipo": "error", "texto": "Lo siento, mi respuesta no fue satisfactoria incluso después de una corrección. Por favor, intenta reformular tu pregunta."}
 
     return respuesta_final
@@ -382,19 +403,16 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
         with st.chat_message("assistant"):
             res = orquestador(prompt, st.session_state.messages)
             
-            # Almacenar la respuesta en el historial
             st.session_state.messages.append({"role": "assistant", "content": res})
 
-            # Mostrar la respuesta
             if res.get("tipo") != "error":
-                st.markdown(f"### IANA responde a: '{prompt}'")
-                if res.get("df") is not None and not res["df"].empty:
-                    st.dataframe(res["df"])
                 if res.get("texto"):
                     st.markdown(res["texto"])
+                if res.get("df") is not None and not res["df"].empty:
+                    st.dataframe(res["df"])
                 if res.get("analisis"):
                     st.markdown("---")
-                    st.markdown("### 🧠 Análisis de IANA para Ventus") 
+                    st.markdown("### 🧠 Análisis de IANA") 
                     st.markdown(res["analisis"])
             else:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
