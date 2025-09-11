@@ -30,7 +30,6 @@ with col2:
 
 @st.cache_resource
 def get_database_connection():
-    """Establece y cachea la conexión a la base de datos."""
     with st.spinner("🔌 Conectando a la base de datos de Ventus..."):
         try:
             db_user = st.secrets["db_credentials"]["user"]
@@ -38,18 +37,8 @@ def get_database_connection():
             db_host = st.secrets["db_credentials"]["host"]
             db_name = st.secrets["db_credentials"]["database"]
             uri = f"mysql+pymysql://{db_user}:{db_pass}@{db_host}/{db_name}"
-
-            engine_args = {
-                "pool_recycle": 3600,
-                "pool_pre_ping": True
-            }
-            
-            db = SQLDatabase.from_uri(
-                uri, 
-                include_tables=["ventus"], 
-                engine_args=engine_args
-            ) 
-            
+            engine_args = {"pool_recycle": 3600, "pool_pre_ping": True}
+            db = SQLDatabase.from_uri(uri, include_tables=["ventus"], engine_args=engine_args) 
             st.success("✅ Conexión a la base de datos establecida.")
             return db
         except Exception as e:
@@ -58,7 +47,6 @@ def get_database_connection():
 
 @st.cache_resource
 def get_llms():
-    """Inicializa y cachea los modelos de lenguaje."""
     with st.spinner("🧠 Inicializando la red de agentes IANA..."):
         try:
             api_key = st.secrets["google_api_key"]
@@ -77,16 +65,10 @@ llm_sql, llm_analista, llm_orq, llm_validador = get_llms()
 
 @st.cache_resource
 def get_sql_agent(_llm, _db):
-    """Crea y cachea el agente SQL."""
-    if not _llm or not _db:
-        return None
+    if not _llm or not _db: return None
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
         toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
-        agent = create_sql_agent(
-            llm=_llm, 
-            toolkit=toolkit, 
-            verbose=False,
-            top_k=1000)
+        agent = create_sql_agent(llm=_llm, toolkit=toolkit, verbose=False, top_k=1000)
         st.success("✅ Agente SQL configurado.")
         return agent
 
@@ -124,7 +106,7 @@ def markdown_table_to_df(texto: str) -> pd.DataFrame:
         except Exception: df[c] = s
     return df
 
-def _df_preview(df: pd.DataFrame, n: int = 20) -> str:
+def _df_preview(df: pd.DataFrame, n: int = 5) -> str:
     if df is None or df.empty: return ""
     try: return df.head(n).to_markdown(index=False)
     except Exception: return df.head(n).to_string(index=False)
@@ -144,21 +126,12 @@ def interpretar_resultado_sql(res: dict) -> dict:
 # ============================================
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
-    # Limpiamos una posible mala generación del LLM
-    prompt_con_instrucciones = f"""
-    Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.
-    {hist_text}
-    Pregunta del usuario: "{pregunta_usuario}"
-    """
+    prompt_con_instrucciones = f'Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.\n{hist_text}\nPregunta del usuario: "{pregunta_usuario}"'
     try:
-        # Usamos un LLM específico para generar solo la consulta
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query = query_chain.invoke({"question": prompt_con_instrucciones})
-        
-        # Limpieza robusta
         sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*SQLQuery:\s*|\s*```\s*$", "", sql_query, flags=re.IGNORECASE).strip()
         sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query_limpia, flags=re.IGNORECASE | re.DOTALL).strip()
-
         st.code(sql_query_limpia, language='sql')
         with st.spinner("⏳ Ejecutando consulta..."):
             with db._engine.connect() as conn:
@@ -171,14 +144,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
-    prompt_sql = (
-        "Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus'. "
-        f"{hist_text}"
-        "Devuelve ÚNICAMENTE una tabla de datos en formato Markdown. "
-        "NUNCA resumas ni expliques los resultados. "
-        "El SQL que generes internamente NO DEBE CONTENER 'LIMIT'. "
-        f"Pregunta del usuario: {pregunta_usuario}"
-    )
+    prompt_sql = (f"Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown. NUNCA resumas. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda..."):
             res = agente_sql.invoke(prompt_sql)
@@ -196,21 +162,14 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     if feedback:
         st.warning(f"⚠️ Reintentando con feedback: {feedback}")
         correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior fue incorrecta. Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.'
-
-    prompt_analisis = f"""
-    {correccion_prompt}
-    Eres IANA, analista de datos senior. Tu tarea es realizar un análisis ejecutivo rápido sobre los datos proporcionados.
-    Pregunta Original: {pregunta_usuario}
-    {hist_text}
-    Datos:
-    {_df_preview(df, 30)}
+    prompt_analisis = f"""{correccion_prompt}
+    Eres IANA, analista de datos senior. Realiza un análisis ejecutivo rápido sobre los datos proporcionados.
+    Pregunta Original: {pregunta_usuario}\n{hist_text}
+    Datos:\n{_df_preview(df, 30)}
     ---
-    FORMATO DE ENTREGA OBLIGATORIO:
-    📌 Resumen Ejecutivo:
-    - (Hallazgos principales con números clave.)
-    🔍 Números de referencia:
-    - (Total General, Promedio, etc.)
-    """
+    FORMATO OBLIGATORIO:
+    📌 Resumen Ejecutivo:\n- (Hallazgos principales.)
+    🔍 Números de referencia:\n- (Total General, Promedio, etc.)"""
     with st.spinner("💡 Generando análisis avanzado..."):
         analisis = llm_analista.invoke(prompt_analisis).content
     st.success("💡 ¡Análisis completado!")
@@ -222,14 +181,10 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str, feedback: str 
     if feedback:
         st.warning(f"⚠️ Reintentando con feedback: {feedback}")
         correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior no fue adecuada. Feedback: "{feedback}". Genera una NUEVA respuesta.'
-
-    prompt_personalidad = f"""
-    {correccion_prompt}
-    Tu nombre es IANA, una IA amable y profesional de Ventus. Ayuda a analizar datos.
+    prompt_personalidad = f"""{correccion_prompt}
+    Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.
     Si el usuario hace un comentario casual, responde amablemente y redirígelo a tus capacidades.
-    {hist_text}
-    Pregunta: "{pregunta_usuario}"
-    """
+    {hist_text}\nPregunta: "{pregunta_usuario}" """
     respuesta = llm_analista.invoke(prompt_personalidad).content
     return {"texto": respuesta, "df": None, "analisis": None}
 
@@ -239,25 +194,27 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str, feedback: str 
 def validar_y_corregir_respuesta(pregunta_usuario: str, respuesta_iana: dict, hist_text: str) -> dict:
     st.info("🕵️‍♀️ Supervisor de Calidad: Verificando la respuesta...")
     contenido_respuesta = ""
-    if respuesta_iana.get("texto"): contenido_respuesta += respuesta_iana["texto"]
+    if respuesta_iana.get("texto"): 
+        contenido_respuesta += respuesta_iana["texto"]
     if respuesta_iana.get("df") is not None and not respuesta_iana["df"].empty:
-        contenido_respuesta += "\n[TABLA DE DATOS CON " + str(len(respuesta_iana["df"])) + " FILAS]"
-    if respuesta_iana.get("analisis"): contenido_respuesta += "\n" + respuesta_iana["analisis"]
+        contenido_respuesta += "\n--- Vista Previa de la Tabla ---\n"
+        contenido_respuesta += _df_preview(respuesta_iana["df"], 5)
+    if respuesta_iana.get("analisis"): 
+        contenido_respuesta += "\n" + respuesta_iana["analisis"]
     if not contenido_respuesta.strip():
         return {"aprobado": False, "feedback": "La respuesta generada está vacía."}
 
     prompt_validacion = f"""
-    Eres un supervisor de calidad de IA estricto. Evalúa si la respuesta es coherente y relevante.
+    Eres un supervisor de calidad de IA estricto. Evalúa si la respuesta generada es una respuesta directa, coherente y relevante para la pregunta del usuario.
     FORMATO OBLIGATORIO:
-    - Si es buena, responde: APROBADO
-    - Si es incorrecta, responde: RECHAZADO: [razón corta y accionable]
+    - Si la respuesta es buena, responde SOLAMENTE con: APROBADO
+    - Si es incorrecta o no responde directamente, responde con: RECHAZADO: [razón corta y accionable]
     ---
     Contexto: {hist_text}
-    Pregunta: "{pregunta_usuario}"
-    Respuesta a Evaluar: "{contenido_respuesta}"
+    Pregunta del Usuario: "{pregunta_usuario}"
+    Respuesta Generada por IANA para Evaluar: "{contenido_respuesta}"
     ---
-    Evaluación:
-    """
+    Evaluación:"""
     try:
         resultado_validacion = llm_validador.invoke(prompt_validacion).content.strip()
         if resultado_validacion.upper().startswith("APROBADO"):
@@ -273,40 +230,27 @@ def validar_y_corregir_respuesta(pregunta_usuario: str, respuesta_iana: dict, hi
         return {"aprobado": False, "feedback": f"Excepción durante la validación: {e}"}
 
 def clasificar_intencion(pregunta: str) -> str:
-    # <<< PROMPT MEJORADO PARA MAYOR PRECISIÓN >>>
     prompt_orq = f"""
-    Tu tarea es clasificar la intención del usuario en UNA de tres categorías. Responde con UNA SOLA PALABRA.
-
-    1.  `consulta`: Si el usuario pide datos crudos.
-        Ejemplos: 'dime cuántos...', 'lista todos los...', 'muéstrame el total de...', 'cuáles son los proveedores'.
-    
-    2.  `analista`: Si el usuario pide una interpretación, resumen, comparación o insight sobre los datos.
-        Ejemplos: 'analiza los costos', 'compara los proveedores', 'cuál es la tendencia', 'dame un resumen de gastos', 'por qué subió el costo'.
-
-    3.  `conversacional`: Si es un saludo, una pregunta sobre tus capacidades o no está relacionada con datos.
-        Ejemplos: 'hola', 'qué puedes hacer', 'gracias'.
-
-    Pregunta del usuario: "{pregunta}"
-    """
+    Clasifica la intención en UNA palabra: `consulta`, `analista` o `conversacional`.
+    `consulta`: Pide datos crudos ('cuántos', 'lista', 'muéstrame').
+    `analista`: Pide interpretación ('analiza', 'compara', 'tendencia', 'resumen').
+    `conversacional`: Saludos o preguntas generales ('hola', 'qué puedes hacer').
+    Pregunta: "{pregunta}" """
     try:
         opciones_validas = ["consulta", "analista", "conversacional"]
         respuesta_llm = llm_orq.invoke(prompt_orq).content.strip().lower().replace('"', '').replace("'", "")
-        
         if respuesta_llm in opciones_validas:
             return respuesta_llm
         else:
-            st.warning("⚠️ Intención no clara. Se asume 'conversacional'.")
             return "conversacional"
     except Exception as e:
-        st.error(f"Error al clasificar intención: {e}. Se usará 'conversacional'.")
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
     res_real = ejecutar_sql_real(pregunta_usuario, hist_text)
     if res_real.get("df") is not None and not res_real["df"].empty:
-        return {"sql": res_real["sql"], "df": res_real["df"], "texto": None}
-    res_nat = ejecutar_sql_en_lenguaje_natural(pregunta_usuario, hist_text)
-    return {"sql": None, "df": res_nat["df"], "texto": res_nat["texto"]}
+        return res_real
+    return ejecutar_sql_en_lenguaje_natural(pregunta_usuario, hist_text)
 
 def orquestador(pregunta_usuario: str, chat_history: list):
     MAX_INTENTOS = 2
@@ -360,9 +304,7 @@ def orquestador(pregunta_usuario: str, chat_history: list):
 # ============================================
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Ventus. Estoy lista para analizar los datos de tus proyectos. ¿Qué te gustaría saber?"}}
-    ]
+    st.session_state.messages = [{"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Ventus. ¿Qué te gustaría saber?"}}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -384,14 +326,11 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
 
         with st.chat_message("assistant"):
             res = orquestador(prompt, st.session_state.messages)
-            
             st.session_state.messages.append({"role": "assistant", "content": res})
 
             if res.get("tipo") != "error":
-                if res.get("texto"):
-                    st.markdown(res["texto"])
-                if res.get("df") is not None and not res["df"].empty:
-                    st.dataframe(res["df"])
+                if res.get("texto"): st.markdown(res["texto"])
+                if res.get("df") is not None and not res["df"].empty: st.dataframe(res["df"])
                 if res.get("analisis"):
                     st.markdown("---")
                     st.markdown("### 🧠 Análisis de IANA") 
