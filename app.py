@@ -51,7 +51,10 @@ def get_llms():
         try:
             api_key = st.secrets["google_api_key"]
             llm_sql = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
-            llm_analista = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.3, google_api_key=api_key)
+            
+            # <<< CAMBIO CLAVE: Reducimos la "creatividad" del analista >>>
+            llm_analista = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
+            
             llm_orq = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key)
             llm_validador = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key) 
             st.success("✅ Agentes de IANA listos.")
@@ -126,35 +129,24 @@ def interpretar_resultado_sql(res: dict) -> dict:
 # ============================================
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
-
-    # <<< ESTA ES LA MODIFICACIÓN CLAVE >>>
     prompt_con_instrucciones = f"""
     Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.
-
     ---
     <<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>
-    1. La columna `Producto` contiene descripciones largas (ej: 'Transporte de materiales a sitio', 'Guantes de carnaza cortos').
-    2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes', 'cemento'), SIEMPRE debes usar el operador `LIKE` con comodines `%%` para buscar dentro de la columna `Producto`.
-    3. EJEMPLO: Si el usuario pregunta "cuántos transportes...", debes generar `WHERE Producto LIKE '%transporte%'`. NUNCA generes `WHERE Producto = 'transporte'`.
+    1. La columna `Producto` contiene descripciones largas.
+    2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), SIEMPRE debes usar `LIKE '%%'` para buscar dentro de la columna `Producto`.
+    3. EJEMPLO: Si el usuario pregunta "cuántos transportes...", debes generar `WHERE Producto LIKE '%transporte%'`.
     ---
-
     {hist_text}
-    
     Pregunta del usuario: "{pregunta_usuario}"
     """
     try:
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
-        
         select_pos = sql_query_bruta.upper().rfind("SELECT")
-        if select_pos != -1:
-            sql_query_limpia = sql_query_bruta[select_pos:]
-        else:
-            sql_query_limpia = sql_query_bruta
-
+        sql_query_limpia = sql_query_bruta[select_pos:] if select_pos != -1 else sql_query_bruta
         sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*```\s*$", "", sql_query_limpia, flags=re.IGNORECASE).strip()
         sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query_limpia, flags=re.IGNORECASE | re.DOTALL).strip()
-
         st.code(sql_query_limpia, language='sql')
         with st.spinner("⏳ Ejecutando consulta..."):
             with db._engine.connect() as conn:
@@ -185,14 +177,23 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     if feedback:
         st.warning(f"⚠️ Reintentando con feedback: {feedback}")
         correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior fue incorrecta. Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.'
+    
+    # <<< PROMPT MEJORADO CON REGLAS DE PRECISIÓN >>>
     prompt_analisis = f"""{correccion_prompt}
-    Eres IANA, analista de datos senior. Realiza un análisis ejecutivo rápido sobre los datos proporcionados.
+    Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO y riguroso.
+    ---
+    <<< REGLAS CRÍTICAS DE PRECISIÓN >>>
+    1.  NO ALUCINAR: NUNCA inventes números, totales, porcentajes o nombres de productos que no estén EXPRESAMENTE en la tabla de 'Datos'. Tu respuesta debe ser 100% verificable con los datos proporcionados.
+    2.  VERIFICAR CÁLCULOS: Antes de escribir un número, verifica dos veces el cálculo (SUMA, CONTEO, PROMEDIO) directamente de la tabla de 'Datos'. Tu reputación depende de tu precisión matemática.
+    3.  CITAR DATOS: Basa CADA afirmación que hagas en los datos visibles en la tabla. No hagas suposiciones sobre datos que no puedes ver.
+    ---
     Pregunta Original: {pregunta_usuario}\n{hist_text}
-    Datos:\n{_df_preview(df, 30)}
+    Datos para tu análisis (usa SÓLO estos datos):
+    {_df_preview(df, 30)}
     ---
     FORMATO OBLIGATORIO:
-    📌 Resumen Ejecutivo:\n- (Hallazgos principales.)
-    🔍 Números de referencia:\n- (Total General, Promedio, etc.)"""
+    📌 Resumen Ejecutivo:\n- (Hallazgos principales basados ESTRICTAMENTE en los datos.)
+    🔍 Números de referencia:\n- (Cifras clave calculadas DIRECTAMENTE de los datos.)"""
     with st.spinner("💡 Generando análisis avanzado..."):
         analisis = llm_analista.invoke(prompt_analisis).content
     st.success("💡 ¡Análisis completado!")
@@ -224,7 +225,7 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
         prompt_validacion = f"""
         Eres un supervisor de calidad estricto. Tu tarea es validar si un 'Análisis' es coherente y se basa ESTRICTAMENTE en los 'Datos de Soporte' proporcionados.
         FORMATO OBLIGATORIO:
-        - Si el análisis se basa en los datos, responde: APROBADO
+        - Si el análisis se basa 100% en los datos, responde: APROBADO
         - Si el análisis alucina, inventa datos o no es relevante, responde: RECHAZADO: [razón corta y accionable]
         ---
         Pregunta Original del Usuario: "{pregunta_usuario}"
@@ -282,6 +283,15 @@ def clasificar_intencion(pregunta: str) -> str:
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
+    # Lógica para usar el DF en memoria si la pregunta es de seguimiento
+    if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
+        for msg in reversed(st.session_state.get('messages', [])):
+            content = msg.get('content', {})
+            if msg['role'] == 'assistant' and isinstance(content, dict) and content.get('df') is not None:
+                st.info("💡 Usando datos de la respuesta anterior para la nueva solicitud.")
+                return {"df": content['df']}
+
+    # Si no, obtiene nuevos datos
     res_real = ejecutar_sql_real(pregunta_usuario, hist_text)
     if res_real.get("df") is not None and not res_real["df"].empty:
         return res_real
