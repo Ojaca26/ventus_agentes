@@ -131,15 +131,12 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
         
-        # <<< LIMPIEZA DE SQL MEJORADA >>>
-        # Busca la última ocurrencia de 'SELECT' para eliminar cualquier texto introductorio.
         select_pos = sql_query_bruta.upper().rfind("SELECT")
         if select_pos != -1:
             sql_query_limpia = sql_query_bruta[select_pos:]
         else:
-            sql_query_limpia = sql_query_bruta # Fallback si no encuentra SELECT
+            sql_query_limpia = sql_query_bruta
 
-        # Limpieza adicional de formato
         sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*```\s*$", "", sql_query_limpia, flags=re.IGNORECASE).strip()
         sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query_limpia, flags=re.IGNORECASE | re.DOTALL).strip()
 
@@ -236,13 +233,23 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
     return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
 
 def clasificar_intencion(pregunta: str) -> str:
-    # <<< PROMPT MEJORADO PARA ENTENDER PREGUNTAS DE SEGUIMIENTO >>>
+    # <<< PROMPT FINAL Y BALANCEADO >>>
     prompt_orq = f"""
-    Clasifica la intención en UNA palabra: `consulta`, `analista` o `conversacional`. Sé muy literal.
-    `consulta`: Pide datos, listas, totales, conteos. ('cuántos', 'lista', 'muéstrame', 'y por mes?', 'ahora agrupado por...').
-    `analista`: Pide interpretación, resúmenes, comparaciones, insights. ('analiza', 'compara', 'tendencia', 'resumen', 'por qué').
-    `conversacional`: Saludos o preguntas generales ('hola', 'qué puedes hacer', 'gracias').
-    Pregunta: "{pregunta}" """
+    Tu tarea es clasificar la intención del usuario. Presta especial atención a los verbos de acción y palabras clave. Responde con UNA SOLA PALABRA.
+
+    1. `analista`: Si la pregunta pide explícitamente una interpretación, resumen, comparación o explicación.
+       PALABRAS CLAVE PRIORITARIAS: analiza, compara, resume, explica, por qué, tendencia, insights, dame un análisis, haz un resumen.
+       Si una de estas palabras clave está presente, la intención SIEMPRE es `analista`.
+
+    2. `consulta`: Si la pregunta pide datos crudos (listas, conteos, totales) y NO contiene una palabra clave prioritaria de `analista`.
+       Ejemplos: 'cuántos proveedores hay', 'lista todos los productos', 'muéstrame el total', 'y ahora por mes'.
+
+    3. `conversacional`: Si es un saludo o una pregunta general no relacionada con datos.
+       Ejemplos: 'hola', 'gracias', 'qué puedes hacer'.
+
+    Pregunta del usuario: "{pregunta}"
+    Clasificación:
+    """
     try:
         opciones_validas = ["consulta", "analista", "conversacional"]
         respuesta_llm = llm_orq.invoke(prompt_orq).content.strip().lower().replace('"', '').replace("'", "")
