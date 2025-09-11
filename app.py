@@ -126,7 +126,22 @@ def interpretar_resultado_sql(res: dict) -> dict:
 # ============================================
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
-    prompt_con_instrucciones = f'Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.\n{hist_text}\nPregunta del usuario: "{pregunta_usuario}"'
+
+    # <<< ESTA ES LA MODIFICACIÓN CLAVE >>>
+    prompt_con_instrucciones = f"""
+    Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.
+
+    ---
+    <<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>
+    1. La columna `Producto` contiene descripciones largas (ej: 'Transporte de materiales a sitio', 'Guantes de carnaza cortos').
+    2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes', 'cemento'), SIEMPRE debes usar el operador `LIKE` con comodines `%%` para buscar dentro de la columna `Producto`.
+    3. EJEMPLO: Si el usuario pregunta "cuántos transportes...", debes generar `WHERE Producto LIKE '%transporte%'`. NUNCA generes `WHERE Producto = 'transporte'`.
+    ---
+
+    {hist_text}
+    
+    Pregunta del usuario: "{pregunta_usuario}"
+    """
     try:
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
@@ -204,12 +219,10 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
         if not contenido_respuesta.strip():
             return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
 
-        # <<< CAMBIO CLAVE: El Supervisor ahora VE los datos que está validando >>>
         df_preview = _df_preview(res_analisis.get("df"), 15)
 
         prompt_validacion = f"""
         Eres un supervisor de calidad estricto. Tu tarea es validar si un 'Análisis' es coherente y se basa ESTRICTAMENTE en los 'Datos de Soporte' proporcionados.
-
         FORMATO OBLIGATORIO:
         - Si el análisis se basa en los datos, responde: APROBADO
         - Si el análisis alucina, inventa datos o no es relevante, responde: RECHAZADO: [razón corta y accionable]
@@ -280,22 +293,18 @@ def orquestador(pregunta_usuario: str, chat_history: list):
         clasificacion = clasificar_intencion(pregunta_usuario)
         st.success(f"✅ ¡Intención detectada! Tarea: {clasificacion.upper()}.")
         
-        # Flujo para preguntas conversacionales (simple y directo)
         if clasificacion == "conversacional":
             return responder_conversacion(pregunta_usuario, hist_text)
 
-        # Para 'consulta' y 'analista', el primer paso siempre es obtener los datos.
         res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
         
         if res_datos.get("df") is None or res_datos["df"].empty:
             return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
 
-        # Si la intención era solo una consulta, se interpreta y se devuelve. No hay validación.
         if clasificacion == "consulta":
             st.success("✅ Consulta directa completada.")
             return interpretar_resultado_sql(res_datos)
         
-        # Si la intención era un análisis, se genera y se pasa al ciclo de validación.
         if clasificacion == "analista":
             st.info("🧠 Generando análisis inicial...")
             res_datos["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_datos.get("df"))
