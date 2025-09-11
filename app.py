@@ -129,9 +129,20 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     prompt_con_instrucciones = f'Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.\n{hist_text}\nPregunta del usuario: "{pregunta_usuario}"'
     try:
         query_chain = create_sql_query_chain(llm_sql, db)
-        sql_query = query_chain.invoke({"question": prompt_con_instrucciones})
-        sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*SQLQuery:\s*|\s*```\s*$", "", sql_query, flags=re.IGNORECASE).strip()
+        sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
+        
+        # <<< LIMPIEZA DE SQL MEJORADA >>>
+        # Busca la última ocurrencia de 'SELECT' para eliminar cualquier texto introductorio.
+        select_pos = sql_query_bruta.upper().rfind("SELECT")
+        if select_pos != -1:
+            sql_query_limpia = sql_query_bruta[select_pos:]
+        else:
+            sql_query_limpia = sql_query_bruta # Fallback si no encuentra SELECT
+
+        # Limpieza adicional de formato
+        sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*```\s*$", "", sql_query_limpia, flags=re.IGNORECASE).strip()
         sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query_limpia, flags=re.IGNORECASE | re.DOTALL).strip()
+
         st.code(sql_query_limpia, language='sql')
         with st.spinner("⏳ Ejecutando consulta..."):
             with db._engine.connect() as conn:
@@ -189,11 +200,8 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str):
 # ============================================
 def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
     MAX_INTENTOS = 2
-    feedback_previo = None
-
     for intento in range(MAX_INTENTOS):
         st.info(f"🕵️‍♀️ Supervisor de Calidad: Verificando análisis (Intento {intento + 1})...")
-        
         contenido_respuesta = res_analisis.get("analisis", "")
         if not contenido_respuesta.strip():
             return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
@@ -228,11 +236,12 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
     return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
 
 def clasificar_intencion(pregunta: str) -> str:
+    # <<< PROMPT MEJORADO PARA ENTENDER PREGUNTAS DE SEGUIMIENTO >>>
     prompt_orq = f"""
-    Clasifica la intención en UNA palabra: `consulta`, `analista` o `conversacional`.
-    `consulta`: Pide datos crudos ('cuántos', 'lista', 'muéstrame').
-    `analista`: Pide interpretación ('analiza', 'compara', 'tendencia', 'resumen').
-    `conversacional`: Saludos o preguntas generales ('hola', 'qué puedes hacer').
+    Clasifica la intención en UNA palabra: `consulta`, `analista` o `conversacional`. Sé muy literal.
+    `consulta`: Pide datos, listas, totales, conteos. ('cuántos', 'lista', 'muéstrame', 'y por mes?', 'ahora agrupado por...').
+    `analista`: Pide interpretación, resúmenes, comparaciones, insights. ('analiza', 'compara', 'tendencia', 'resumen', 'por qué').
+    `conversacional`: Saludos o preguntas generales ('hola', 'qué puedes hacer', 'gracias').
     Pregunta: "{pregunta}" """
     try:
         opciones_validas = ["consulta", "analista", "conversacional"]
@@ -257,23 +266,18 @@ def orquestador(pregunta_usuario: str, chat_history: list):
         if clasificacion == "conversacional":
             return responder_conversacion(pregunta_usuario, hist_text)
 
-        # Para 'consulta' y 'analista', primero obtenemos los datos
         res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
         
-        # Si no se obtuvieron datos, devolvemos un error
         if res_datos.get("df") is None or res_datos["df"].empty:
             return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
 
-        # Si la intención era solo una consulta, la devolvemos directamente
         if clasificacion == "consulta":
             st.success("✅ Consulta directa completada.")
             return interpretar_resultado_sql(res_datos)
         
-        # Si la intención era un análisis, generamos y validamos
         if clasificacion == "analista":
             st.info("🧠 Generando análisis inicial...")
             res_datos["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_datos.get("df"))
-            # El bucle de validación y corrección ahora solo se aplica al análisis
             return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
 
 # ============================================
