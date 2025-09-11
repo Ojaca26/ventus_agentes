@@ -18,7 +18,6 @@ st.set_page_config(page_title="IANA para Ventus", page_icon="logo_ventus.png", l
 col1, col2 = st.columns([1, 4]) 
 
 with col1:
-    # Asegúrate de tener un archivo "logo_ventus.png" en la misma carpeta
     st.image("logo_ventus.png", width=120) 
 
 with col2:
@@ -131,19 +130,11 @@ def _df_preview(df: pd.DataFrame, n: int = 20) -> str:
     except Exception: return df.head(n).to_string(index=False)
 
 def interpretar_resultado_sql(res: dict) -> dict:
-    """
-    Si el resultado de una consulta es una tabla 1x1, extrae el valor
-    y lo añade como texto para que la respuesta sea más directa.
-    """
     df = res.get("df")
-    # Solo actuar si no hay ya un texto de respuesta
     if df is not None and not df.empty and res.get("texto") is None:
-        # Comprobar si el DataFrame tiene exactamente una fila y una columna
         if df.shape == (1, 1):
             valor = df.iloc[0, 0]
-            # Extraer el nombre de la columna para dar más contexto
             nombre_columna = df.columns[0]
-            # Crear un texto de respuesta claro
             res["texto"] = f"La respuesta para '{nombre_columna}' es: **{valor}**"
             st.info("💡 Resultado numérico interpretado para una respuesta directa.")
     return res
@@ -153,21 +144,21 @@ def interpretar_resultado_sql(res: dict) -> dict:
 # ============================================
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
+    # Limpiamos una posible mala generación del LLM
     prompt_con_instrucciones = f"""
-    Tu tarea es generar una consulta SQL únicamente contra la tabla 'ventus' para responder la pregunta del usuario.
-    Usa el contexto de la conversación anterior para resolver pronombres o preguntas de seguimiento.
+    Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.
     {hist_text}
-    REGLA 1: La única tabla que debes usar es "ventus".
-    REGLA 2: Los campos de costo y cantidad (Total_COP, Total_USD, Cantidad) YA SON numéricos. Puedes usarlos directamente con SUM(), AVG(), etc.
-    REGLA 3: Presta atención a palabras como 'diariamente', 'mensual', etc. para agrupar por `Fecha_aprobacion`.
-    REGLA 4: NUNCA agregues un 'LIMIT' al final de la consulta.
-    Pregunta original del usuario: "{pregunta_usuario}"
-    """    
+    Pregunta del usuario: "{pregunta_usuario}"
+    """
     try:
+        # Usamos un LLM específico para generar solo la consulta
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query = query_chain.invoke({"question": prompt_con_instrucciones})
-        sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*```\s*$", "", sql_query, flags=re.IGNORECASE).strip()
+        
+        # Limpieza robusta
+        sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*SQLQuery:\s*|\s*```\s*$", "", sql_query, flags=re.IGNORECASE).strip()
         sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query_limpia, flags=re.IGNORECASE | re.DOTALL).strip()
+
         st.code(sql_query_limpia, language='sql')
         with st.spinner("⏳ Ejecutando consulta..."):
             with db._engine.connect() as conn:
@@ -181,13 +172,12 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
     prompt_sql = (
-        "Tu tarea es responder la pregunta del usuario consultando la base de datos (tabla 'ventus'). "
-        f"Usa el contexto de la conversación: {hist_text}"
+        "Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus'. "
+        f"{hist_text}"
         "Devuelve ÚNICAMENTE una tabla de datos en formato Markdown. "
-        "REGLA CRÍTICA 1: Devuelve SIEMPRE TODAS las filas que encuentres. NUNCA resumas ni expliques. "
-        "REGLA CRÍTICA 2: El SQL que generes internamente NO DEBE CONTENER 'LIMIT'. "
-        "Responde en español. "
-        f"\nPregunta del usuario: {pregunta_usuario}"
+        "NUNCA resumas ni expliques los resultados. "
+        "El SQL que generes internamente NO DEBE CONTENER 'LIMIT'. "
+        f"Pregunta del usuario: {pregunta_usuario}"
     )
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda..."):
@@ -205,25 +195,15 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     correccion_prompt = ""
     if feedback:
         st.warning(f"⚠️ Reintentando con feedback: {feedback}")
-        correccion_prompt = f"""
-        ---
-        INSTRUCCIÓN DE CORRECCIÓN URGENTE:
-        Tu respuesta anterior fue incorrecta. Feedback del supervisor: "{feedback}"
-        Por favor, genera una NUEVA respuesta que corrija este error y se alinee con la pregunta original.
-        ---
-        """
+        correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior fue incorrecta. Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.'
+
     prompt_analisis = f"""
     {correccion_prompt}
-    Eres IANA, analista de datos senior en Ventus. Tu tarea es realizar un análisis ejecutivo rápido sobre los datos proporcionados.
-    Pregunta Original del Usuario: {pregunta_usuario}
+    Eres IANA, analista de datos senior. Tu tarea es realizar un análisis ejecutivo rápido sobre los datos proporcionados.
+    Pregunta Original: {pregunta_usuario}
     {hist_text}
-    Datos para tu análisis (preview):
+    Datos:
     {_df_preview(df, 30)}
-    ---
-    INSTRUCCIONES DE ANÁLISIS OBLIGATORIAS:
-    1. Calcula totales y porcentajes clave.
-    2. Detecta concentración (Principio de Pareto).
-    3. Analiza dispersión (ticket promedio, valores max/min).
     ---
     FORMATO DE ENTREGA OBLIGATORIO:
     📌 Resumen Ejecutivo:
@@ -241,26 +221,20 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str, feedback: str 
     correccion_prompt = ""
     if feedback:
         st.warning(f"⚠️ Reintentando con feedback: {feedback}")
-        correccion_prompt = f"""
-        ---
-        INSTRUCCIÓN DE CORRECCIÓN URGENTE:
-        Tu respuesta anterior no fue adecuada. Feedback del supervisor: "{feedback}"
-        Por favor, genera una NUEVA respuesta que siga este feedback.
-        ---
-        """
+        correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior no fue adecuada. Feedback: "{feedback}". Genera una NUEVA respuesta.'
+
     prompt_personalidad = f"""
     {correccion_prompt}
-    Tu nombre es IANA, una IA amable y profesional de Ventus. Tu objetivo es ayudar a analizar datos.
-    Si el usuario hace un comentario casual o broma, responde amablemente y redirígelo a tus capacidades de análisis.
-    Responde en español.
+    Tu nombre es IANA, una IA amable y profesional de Ventus. Ayuda a analizar datos.
+    Si el usuario hace un comentario casual, responde amablemente y redirígelo a tus capacidades.
     {hist_text}
-    Pregunta del usuario: "{pregunta_usuario}"
+    Pregunta: "{pregunta_usuario}"
     """
     respuesta = llm_analista.invoke(prompt_personalidad).content
     return {"texto": respuesta, "df": None, "analisis": None}
 
 # ============================================
-# Agente Validador y Lógica Principal
+# Lógica Principal y Orquestador
 # ============================================
 def validar_y_corregir_respuesta(pregunta_usuario: str, respuesta_iana: dict, hist_text: str) -> dict:
     st.info("🕵️‍♀️ Supervisor de Calidad: Verificando la respuesta...")
@@ -273,14 +247,14 @@ def validar_y_corregir_respuesta(pregunta_usuario: str, respuesta_iana: dict, hi
         return {"aprobado": False, "feedback": "La respuesta generada está vacía."}
 
     prompt_validacion = f"""
-    Eres un supervisor de calidad de IA estricto. Evalúa si la respuesta de IANA es coherente y relevante para la pregunta del usuario y el contexto.
-    FORMATO DE SALIDA OBLIGATORIO:
-    - Si es buena, responde SOLAMENTE con: APROBADO
-    - Si es incorrecta/irrelevante, responde con: RECHAZADO: [razón corta y accionable]
+    Eres un supervisor de calidad de IA estricto. Evalúa si la respuesta es coherente y relevante.
+    FORMATO OBLIGATORIO:
+    - Si es buena, responde: APROBADO
+    - Si es incorrecta, responde: RECHAZADO: [razón corta y accionable]
     ---
     Contexto: {hist_text}
-    Pregunta del Usuario: "{pregunta_usuario}"
-    Respuesta de IANA a Evaluar: "{contenido_respuesta}"
+    Pregunta: "{pregunta_usuario}"
+    Respuesta a Evaluar: "{contenido_respuesta}"
     ---
     Evaluación:
     """
@@ -294,26 +268,35 @@ def validar_y_corregir_respuesta(pregunta_usuario: str, respuesta_iana: dict, hi
             st.warning(f"❌ Respuesta rechazada. Feedback: {feedback}")
             return {"aprobado": False, "feedback": feedback}
         else:
-            st.warning("⚠️ El validador dio una respuesta ambigua. Rechazando por precaución.")
             return {"aprobado": False, "feedback": "Respuesta ambigua del validador."}
     except Exception as e:
-        st.error(f"Error en el validador: {e}")
         return {"aprobado": False, "feedback": f"Excepción durante la validación: {e}"}
 
 def clasificar_intencion(pregunta: str) -> str:
+    # <<< PROMPT MEJORADO PARA MAYOR PRECISIÓN >>>
     prompt_orq = f"""
-    Devuelve UNA sola palabra: `consulta`, `analista` o `conversacional` según la intención del usuario.
-    Mensaje: {pregunta}
+    Tu tarea es clasificar la intención del usuario en UNA de tres categorías. Responde con UNA SOLA PALABRA.
+
+    1.  `consulta`: Si el usuario pide datos crudos.
+        Ejemplos: 'dime cuántos...', 'lista todos los...', 'muéstrame el total de...', 'cuáles son los proveedores'.
+    
+    2.  `analista`: Si el usuario pide una interpretación, resumen, comparación o insight sobre los datos.
+        Ejemplos: 'analiza los costos', 'compara los proveedores', 'cuál es la tendencia', 'dame un resumen de gastos', 'por qué subió el costo'.
+
+    3.  `conversacional`: Si es un saludo, una pregunta sobre tus capacidades o no está relacionada con datos.
+        Ejemplos: 'hola', 'qué puedes hacer', 'gracias'.
+
+    Pregunta del usuario: "{pregunta}"
     """
     try:
         opciones_validas = ["consulta", "analista", "conversacional"]
-        respuesta_llm = llm_orq.invoke(prompt_orq).content
-        if respuesta_llm:
-            clasificacion = respuesta_llm.strip().lower().replace('"', '').replace("'", "")
-            if clasificacion in opciones_validas:
-                return clasificacion
-        st.warning("⚠️ Intención no clara. Se asume 'conversacional'.")
-        return "conversacional"
+        respuesta_llm = llm_orq.invoke(prompt_orq).content.strip().lower().replace('"', '').replace("'", "")
+        
+        if respuesta_llm in opciones_validas:
+            return respuesta_llm
+        else:
+            st.warning("⚠️ Intención no clara. Se asume 'conversacional'.")
+            return "conversacional"
     except Exception as e:
         st.error(f"Error al clasificar intención: {e}. Se usará 'conversacional'.")
         return "conversacional"
@@ -368,7 +351,6 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             else:
                 feedback_previo = resultado_validacion["feedback"]
                 if intento == MAX_INTENTOS - 1:
-                    st.error("Lo siento, mi respuesta no fue satisfactoria incluso después de una corrección. Por favor, intenta reformular tu pregunta.")
                     respuesta_final = {"tipo": "error", "texto": "Lo siento, mi respuesta no fue satisfactoria incluso después de una corrección. Por favor, intenta reformular tu pregunta."}
 
     return respuesta_final
