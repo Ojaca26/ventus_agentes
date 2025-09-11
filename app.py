@@ -199,20 +199,31 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
     MAX_INTENTOS = 2
     for intento in range(MAX_INTENTOS):
         st.info(f"🕵️‍♀️ Supervisor de Calidad: Verificando análisis (Intento {intento + 1})...")
+        
         contenido_respuesta = res_analisis.get("analisis", "")
         if not contenido_respuesta.strip():
             return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
 
+        # <<< CAMBIO CLAVE: El Supervisor ahora VE los datos que está validando >>>
+        df_preview = _df_preview(res_analisis.get("df"), 15)
+
         prompt_validacion = f"""
-        Eres un supervisor de calidad estricto. Evalúa si el análisis de IANA es coherente y relevante.
+        Eres un supervisor de calidad estricto. Tu tarea es validar si un 'Análisis' es coherente y se basa ESTRICTAMENTE en los 'Datos de Soporte' proporcionados.
+
         FORMATO OBLIGATORIO:
-        - Si es bueno, responde: APROBADO
-        - Si es incorrecto, responde: RECHAZADO: [razón corta y accionable]
+        - Si el análisis se basa en los datos, responde: APROBADO
+        - Si el análisis alucina, inventa datos o no es relevante, responde: RECHAZADO: [razón corta y accionable]
         ---
-        Pregunta del Usuario: "{pregunta_usuario}"
-        Análisis a Evaluar: "{contenido_respuesta}"
+        Pregunta Original del Usuario: "{pregunta_usuario}"
         ---
-        Evaluación:"""
+        Datos de Soporte (la tabla que la IA usó para el análisis):
+        {df_preview}
+        ---
+        Análisis a Evaluar:
+        "{contenido_respuesta}"
+        ---
+        Evaluación: ¿El análisis se basa fielmente en los Datos de Soporte?
+        """
         try:
             resultado_validacion = llm_validador.invoke(prompt_validacion).content.strip()
             if resultado_validacion.upper().startswith("APROBADO"):
@@ -233,7 +244,6 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
     return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
 
 def clasificar_intencion(pregunta: str) -> str:
-    # <<< PROMPT FINAL Y BALANCEADO >>>
     prompt_orq = f"""
     Tu tarea es clasificar la intención del usuario. Presta especial atención a los verbos de acción y palabras clave. Responde con UNA SOLA PALABRA.
 
@@ -270,18 +280,22 @@ def orquestador(pregunta_usuario: str, chat_history: list):
         clasificacion = clasificar_intencion(pregunta_usuario)
         st.success(f"✅ ¡Intención detectada! Tarea: {clasificacion.upper()}.")
         
+        # Flujo para preguntas conversacionales (simple y directo)
         if clasificacion == "conversacional":
             return responder_conversacion(pregunta_usuario, hist_text)
 
+        # Para 'consulta' y 'analista', el primer paso siempre es obtener los datos.
         res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
         
         if res_datos.get("df") is None or res_datos["df"].empty:
             return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
 
+        # Si la intención era solo una consulta, se interpreta y se devuelve. No hay validación.
         if clasificacion == "consulta":
             st.success("✅ Consulta directa completada.")
             return interpretar_resultado_sql(res_datos)
         
+        # Si la intención era un análisis, se genera y se pasa al ciclo de validación.
         if clasificacion == "analista":
             st.info("🧠 Generando análisis inicial...")
             res_datos["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_datos.get("df"))
