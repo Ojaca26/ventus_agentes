@@ -51,10 +51,7 @@ def get_llms():
         try:
             api_key = st.secrets["google_api_key"]
             llm_sql = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
-            
-            # <<< CAMBIO CLAVE: Reducimos la "creatividad" del analista >>>
             llm_analista = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
-            
             llm_orq = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key)
             llm_validador = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key) 
             st.success("✅ Agentes de IANA listos.")
@@ -178,18 +175,18 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
         st.warning(f"⚠️ Reintentando con feedback: {feedback}")
         correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior fue incorrecta. Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.'
     
-    # <<< PROMPT MEJORADO CON REGLAS DE PRECISIÓN >>>
     prompt_analisis = f"""{correccion_prompt}
     Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO y riguroso.
     ---
     <<< REGLAS CRÍTICAS DE PRECISIÓN >>>
-    1.  NO ALUCINAR: NUNCA inventes números, totales, porcentajes o nombres de productos que no estén EXPRESAMENTE en la tabla de 'Datos'. Tu respuesta debe ser 100% verificable con los datos proporcionados.
-    2.  VERIFICAR CÁLCULOS: Antes de escribir un número, verifica dos veces el cálculo (SUMA, CONTEO, PROMEDIO) directamente de la tabla de 'Datos'. Tu reputación depende de tu precisión matemática.
-    3.  CITAR DATOS: Basa CADA afirmación que hagas en los datos visibles en la tabla. No hagas suposiciones sobre datos que no puedes ver.
+    1.  **NO ALUCINAR**: NUNCA inventes números, totales, porcentajes o nombres de productos/categorías que no estén EXPRESAMENTE en la tabla de 'Datos'. Tu respuesta debe ser 100% verificable con los datos proporcionados.
+    2.  **MANEJO DE DATOS INCOMPLETOS (SPARSE DATA)**: Es normal que los datos no contengan entradas para todos los meses o categorías. Tu tarea es reportar sobre los datos que SÍ existen. Es un hallazgo importante señalar los vacíos. EJEMPLO: "No se registraron datos para el mes de Marzo". NUNCA inventes datos para rellenar vacíos.
+    3.  **VERIFICAR CÁLCULOS**: Antes de escribir un número, verifica dos veces el cálculo (SUMA, CONTEO, PROMEDIO) directamente de la tabla de 'Datos'.
+    4.  **CITAR DATOS**: Basa CADA afirmación que hagas en los datos visibles en la tabla. No hagas suposiciones.
     ---
     Pregunta Original: {pregunta_usuario}\n{hist_text}
     Datos para tu análisis (usa SÓLO estos datos):
-    {_df_preview(df, 30)}
+    {_df_preview(df, 50)} 
     ---
     FORMATO OBLIGATORIO:
     📌 Resumen Ejecutivo:\n- (Hallazgos principales basados ESTRICTAMENTE en los datos.)
@@ -220,7 +217,7 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
         if not contenido_respuesta.strip():
             return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
 
-        df_preview = _df_preview(res_analisis.get("df"), 15)
+        df_preview = _df_preview(res_analisis.get("df"), 50)
 
         prompt_validacion = f"""
         Eres un supervisor de calidad estricto. Tu tarea es validar si un 'Análisis' es coherente y se basa ESTRICTAMENTE en los 'Datos de Soporte' proporcionados.
@@ -283,7 +280,6 @@ def clasificar_intencion(pregunta: str) -> str:
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
-    # Lógica para usar el DF en memoria si la pregunta es de seguimiento
     if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
         for msg in reversed(st.session_state.get('messages', [])):
             content = msg.get('content', {})
@@ -291,7 +287,6 @@ def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
                 st.info("💡 Usando datos de la respuesta anterior para la nueva solicitud.")
                 return {"df": content['df']}
 
-    # Si no, obtiene nuevos datos
     res_real = ejecutar_sql_real(pregunta_usuario, hist_text)
     if res_real.get("df") is not None and not res_real["df"].empty:
         return res_real
