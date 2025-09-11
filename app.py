@@ -175,13 +175,9 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     st.success("💡 ¡Análisis completado!")
     return analisis
 
-def responder_conversacion(pregunta_usuario: str, hist_text: str, feedback: str = None):
+def responder_conversacion(pregunta_usuario: str, hist_text: str):
     st.info("💬 Activando modo de conversación...")
-    correccion_prompt = ""
-    if feedback:
-        st.warning(f"⚠️ Reintentando con feedback: {feedback}")
-        correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior no fue adecuada. Feedback: "{feedback}". Genera una NUEVA respuesta.'
-    prompt_personalidad = f"""{correccion_prompt}
+    prompt_personalidad = f"""
     Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.
     Si el usuario hace un comentario casual, responde amablemente y redirígelo a tus capacidades.
     {hist_text}\nPregunta: "{pregunta_usuario}" """
@@ -191,43 +187,45 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str, feedback: str 
 # ============================================
 # Lógica Principal y Orquestador
 # ============================================
-def validar_y_corregir_respuesta(pregunta_usuario: str, respuesta_iana: dict, hist_text: str) -> dict:
-    st.info("🕵️‍♀️ Supervisor de Calidad: Verificando la respuesta...")
-    contenido_respuesta = ""
-    if respuesta_iana.get("texto"): 
-        contenido_respuesta += respuesta_iana["texto"]
-    if respuesta_iana.get("df") is not None and not respuesta_iana["df"].empty:
-        contenido_respuesta += "\n--- Vista Previa de la Tabla ---\n"
-        contenido_respuesta += _df_preview(respuesta_iana["df"], 5)
-    if respuesta_iana.get("analisis"): 
-        contenido_respuesta += "\n" + respuesta_iana["analisis"]
-    if not contenido_respuesta.strip():
-        return {"aprobado": False, "feedback": "La respuesta generada está vacía."}
+def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
+    MAX_INTENTOS = 2
+    feedback_previo = None
 
-    prompt_validacion = f"""
-    Eres un supervisor de calidad de IA estricto. Evalúa si la respuesta generada es una respuesta directa, coherente y relevante para la pregunta del usuario.
-    FORMATO OBLIGATORIO:
-    - Si la respuesta es buena, responde SOLAMENTE con: APROBADO
-    - Si es incorrecta o no responde directamente, responde con: RECHAZADO: [razón corta y accionable]
-    ---
-    Contexto: {hist_text}
-    Pregunta del Usuario: "{pregunta_usuario}"
-    Respuesta Generada por IANA para Evaluar: "{contenido_respuesta}"
-    ---
-    Evaluación:"""
-    try:
-        resultado_validacion = llm_validador.invoke(prompt_validacion).content.strip()
-        if resultado_validacion.upper().startswith("APROBADO"):
-            st.success("✅ Respuesta aprobada por el Supervisor.")
-            return {"aprobado": True, "feedback": None}
-        elif resultado_validacion.upper().startswith("RECHAZADO"):
-            feedback = resultado_validacion.split(":", 1)[1].strip() if ":" in resultado_validacion else "Razón no especificada."
-            st.warning(f"❌ Respuesta rechazada. Feedback: {feedback}")
-            return {"aprobado": False, "feedback": feedback}
-        else:
-            return {"aprobado": False, "feedback": "Respuesta ambigua del validador."}
-    except Exception as e:
-        return {"aprobado": False, "feedback": f"Excepción durante la validación: {e}"}
+    for intento in range(MAX_INTENTOS):
+        st.info(f"🕵️‍♀️ Supervisor de Calidad: Verificando análisis (Intento {intento + 1})...")
+        
+        contenido_respuesta = res_analisis.get("analisis", "")
+        if not contenido_respuesta.strip():
+            return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
+
+        prompt_validacion = f"""
+        Eres un supervisor de calidad estricto. Evalúa si el análisis de IANA es coherente y relevante.
+        FORMATO OBLIGATORIO:
+        - Si es bueno, responde: APROBADO
+        - Si es incorrecto, responde: RECHAZADO: [razón corta y accionable]
+        ---
+        Pregunta del Usuario: "{pregunta_usuario}"
+        Análisis a Evaluar: "{contenido_respuesta}"
+        ---
+        Evaluación:"""
+        try:
+            resultado_validacion = llm_validador.invoke(prompt_validacion).content.strip()
+            if resultado_validacion.upper().startswith("APROBADO"):
+                st.success("✅ Análisis aprobado por el Supervisor.")
+                return res_analisis 
+            elif resultado_validacion.upper().startswith("RECHAZADO"):
+                feedback_previo = resultado_validacion.split(":", 1)[1].strip() if ":" in resultado_validacion else "Razón no especificada."
+                st.warning(f"❌ Análisis rechazado. Feedback: {feedback_previo}")
+                if intento < MAX_INTENTOS - 1:
+                    st.info("🔄 Regenerando análisis con feedback...")
+                    res_analisis["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_analisis.get("df"), feedback=feedback_previo)
+                else:
+                    return {"tipo": "error", "texto": "El análisis no fue satisfactorio incluso después de una corrección."}
+            else:
+                return {"tipo": "error", "texto": "Respuesta ambigua del validador."}
+        except Exception as e:
+            return {"tipo": "error", "texto": f"Excepción durante la validación: {e}"}
+    return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
 
 def clasificar_intencion(pregunta: str) -> str:
     prompt_orq = f"""
@@ -239,11 +237,9 @@ def clasificar_intencion(pregunta: str) -> str:
     try:
         opciones_validas = ["consulta", "analista", "conversacional"]
         respuesta_llm = llm_orq.invoke(prompt_orq).content.strip().lower().replace('"', '').replace("'", "")
-        if respuesta_llm in opciones_validas:
-            return respuesta_llm
-        else:
-            return "conversacional"
-    except Exception as e:
+        if respuesta_llm in opciones_validas: return respuesta_llm
+        return "conversacional"
+    except Exception:
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
@@ -253,51 +249,32 @@ def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
     return ejecutar_sql_en_lenguaje_natural(pregunta_usuario, hist_text)
 
 def orquestador(pregunta_usuario: str, chat_history: list):
-    MAX_INTENTOS = 2
-    respuesta_final = None
-    feedback_previo = None
-
     with st.expander("⚙️ Ver Proceso de IANA", expanded=False):
         hist_text = get_history_text(chat_history)
         clasificacion = clasificar_intencion(pregunta_usuario)
         st.success(f"✅ ¡Intención detectada! Tarea: {clasificacion.upper()}.")
         
-        res = {"tipo": clasificacion, "df": None, "texto": None, "analisis": None}
+        if clasificacion == "conversacional":
+            return responder_conversacion(pregunta_usuario, hist_text)
 
-        for intento in range(MAX_INTENTOS):
-            st.info(f"🚀 **Intento {intento + 1} de {MAX_INTENTOS}**")
-            
-            if intento == 0:
-                if clasificacion == "conversacional":
-                    res = responder_conversacion(pregunta_usuario, hist_text)
-                else: 
-                    res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
-                    res.update(res_datos)
-                    res = interpretar_resultado_sql(res)
-                    if clasificacion == "analista" and res.get("df") is not None and not res["df"].empty:
-                        res["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res["df"])
-            else: 
-                st.info(f"🔄 Regenerando respuesta con base en el feedback: '{feedback_previo}'")
-                if clasificacion == "conversacional":
-                    res = responder_conversacion(pregunta_usuario, hist_text, feedback=feedback_previo)
-                elif clasificacion == "consulta":
-                    res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
-                    res.update(res_datos)
-                    res = interpretar_resultado_sql(res)
-                elif clasificacion == "analista":
-                    res["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res.get("df"), feedback=feedback_previo)
+        # Para 'consulta' y 'analista', primero obtenemos los datos
+        res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
+        
+        # Si no se obtuvieron datos, devolvemos un error
+        if res_datos.get("df") is None or res_datos["df"].empty:
+            return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
 
-            resultado_validacion = validar_y_corregir_respuesta(pregunta_usuario, res, hist_text)
-            
-            if resultado_validacion["aprobado"]:
-                respuesta_final = res
-                break 
-            else:
-                feedback_previo = resultado_validacion["feedback"]
-                if intento == MAX_INTENTOS - 1:
-                    respuesta_final = {"tipo": "error", "texto": "Lo siento, mi respuesta no fue satisfactoria incluso después de una corrección. Por favor, intenta reformular tu pregunta."}
-
-    return respuesta_final
+        # Si la intención era solo una consulta, la devolvemos directamente
+        if clasificacion == "consulta":
+            st.success("✅ Consulta directa completada.")
+            return interpretar_resultado_sql(res_datos)
+        
+        # Si la intención era un análisis, generamos y validamos
+        if clasificacion == "analista":
+            st.info("🧠 Generando análisis inicial...")
+            res_datos["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_datos.get("df"))
+            # El bucle de validación y corrección ahora solo se aplica al análisis
+            return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
 
 # ============================================
 # 3) Interfaz de Chat de Streamlit
@@ -328,12 +305,12 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
             res = orquestador(prompt, st.session_state.messages)
             st.session_state.messages.append({"role": "assistant", "content": res})
 
-            if res.get("tipo") != "error":
+            if res and res.get("tipo") != "error":
                 if res.get("texto"): st.markdown(res["texto"])
                 if res.get("df") is not None and not res["df"].empty: st.dataframe(res["df"])
                 if res.get("analisis"):
                     st.markdown("---")
                     st.markdown("### 🧠 Análisis de IANA") 
                     st.markdown(res["analisis"])
-            else:
+            elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
