@@ -1,3 +1,2 @@
-# Contenido para tu nuevo archivo packages.txt
 ffmpeg
 libavdevice-dev
