@@ -38,17 +38,11 @@ with col2:
 def get_speech_client():
     """Crea y cachea un cliente para la API de Speech-to-Text."""
     try:
-        # Usamos las credenciales de st.secrets para autenticar
         credentials_json = dict(st.secrets.gcp_service_account)
-        
-        # Guardar temporalmente las credenciales en un archivo para que la librería pueda leerlas
         with open("gcp_credentials.json", "w") as f:
             json.dump(credentials_json, f)
-        
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_credentials.json"
-
         speech_client = speech.SpeechClient()
-        # Limpiar el archivo después de cargar el cliente
         os.remove("gcp_credentials.json")
         return speech_client
     except Exception as e:
@@ -67,7 +61,7 @@ def transcribir_audio(_speech_client, audio_bytes):
             config = speech.RecognitionConfig(
                 encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
                 sample_rate_hertz=16000,
-                language_code="es-CO",  # Español de Colombia
+                language_code="es-CO",
                 model="telephony" 
             )
             response = _speech_client.recognize(config=config, audio=audio)
@@ -83,12 +77,11 @@ def transcribir_audio(_speech_client, audio_bytes):
 speech_client = get_speech_client()
 
 # ============================================
-# 1) Conexión a la Base de Datos y LLMs (SIN CAMBIOS)
+# 1) Conexión a la Base de Datos y LLMs
 # ============================================
 
 @st.cache_resource
 def get_database_connection():
-    # ... (código sin cambios)
     with st.spinner("🔌 Conectando a la base de datos de Ventus..."):
         try:
             db_user = st.secrets["db_credentials"]["user"]
@@ -106,7 +99,6 @@ def get_database_connection():
 
 @st.cache_resource
 def get_llms():
-    # ... (código sin cambios)
     with st.spinner("🧠 Inicializando la red de agentes IANA..."):
         try:
             api_key = st.secrets["google_api_key"]
@@ -125,7 +117,6 @@ llm_sql, llm_analista, llm_orq, llm_validador = get_llms()
 
 @st.cache_resource
 def get_sql_agent(_llm, _db):
-    # ... (código sin cambios)
     if not _llm or not _db: return None
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
         toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
@@ -136,10 +127,9 @@ def get_sql_agent(_llm, _db):
 agente_sql = get_sql_agent(llm_sql, db)
 
 # ============================================
-# Funciones Auxiliares (SIN CAMBIOS)
+# Funciones Auxiliares
 # ============================================
 def get_history_text(chat_history: list, n_turns=3) -> str:
-    # ... (código sin cambios)
     if not chat_history or len(chat_history) <= 1: return ""
     history_text = []
     relevant_history = chat_history[-(n_turns * 2 + 1) : -1]
@@ -155,7 +145,6 @@ def get_history_text(chat_history: list, n_turns=3) -> str:
     return "\n--- Contexto de Conversación Anterior ---\n" + "\n".join(history_text) + "\n--- Fin del Contexto ---\n"
 
 def markdown_table_to_df(texto: str) -> pd.DataFrame:
-    # ... (código sin cambios)
     lineas = [l.strip() for l in texto.splitlines() if l.strip().startswith('|')]
     if not lineas: return pd.DataFrame()
     lineas = [l for l in lineas if not re.match(r'^\|\s*-', l)]
@@ -170,13 +159,11 @@ def markdown_table_to_df(texto: str) -> pd.DataFrame:
     return df
 
 def _df_preview(df: pd.DataFrame, n: int = 5) -> str:
-    # ... (código sin cambios)
     if df is None or df.empty: return ""
     try: return df.head(n).to_markdown(index=False)
     except Exception: return df.head(n).to_string(index=False)
 
 def interpretar_resultado_sql(res: dict) -> dict:
-    # ... (código sin cambios)
     df = res.get("df")
     if df is not None and not df.empty and res.get("texto") is None:
         if df.shape == (1, 1):
@@ -187,10 +174,9 @@ def interpretar_resultado_sql(res: dict) -> dict:
     return res
 
 # ============================================
-# Funciones de Agentes (SIN CAMBIOS)
+# Funciones de Agentes
 # ============================================
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
-    # ... (código sin cambios)
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
     prompt_con_instrucciones = f"""
     Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.
@@ -221,7 +207,6 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         return {"sql": None, "df": None, "error": str(e)}
 
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
-    # ... (código sin cambios)
     st.info("🤔 Activando el agente SQL experto como plan B.")
     prompt_sql = (f"Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown. NUNCA resumas. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
     try:
@@ -236,12 +221,12 @@ def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
         return {"texto": f"[SQL_ERROR] {e}", "df": pd.DataFrame()}
 
 def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame | None, feedback: str = None):
-    # ... (código sin cambios)
     st.info("\n🧠 El analista experto está examinando los datos...")
     correccion_prompt = ""
     if feedback:
         st.warning(f"⚠️ Reintentando con feedback: {feedback}")
         correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior fue incorrecta. Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.'
+    
     prompt_analisis = f"""{correccion_prompt}
     Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO y riguroso.
     ---
@@ -264,7 +249,6 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     return analisis
 
 def responder_conversacion(pregunta_usuario: str, hist_text: str):
-    # ... (código sin cambios)
     st.info("💬 Activando modo de conversación...")
     prompt_personalidad = f"""
     Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.
@@ -274,18 +258,19 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str):
     return {"texto": respuesta, "df": None, "analisis": None}
 
 # ============================================
-# Lógica Principal y Orquestador (SIN CAMBIOS)
+# Lógica Principal y Orquestador
 # ============================================
 def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
-    # ... (código sin cambios)
     MAX_INTENTOS = 2
     for intento in range(MAX_INTENTOS):
         st.info(f"🕵️‍♀️ Supervisor de Calidad: Verificando análisis (Intento {intento + 1})...")
+        
         contenido_respuesta = res_analisis.get("analisis", "")
         if not contenido_respuesta.strip():
             return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
 
         df_preview = _df_preview(res_analisis.get("df"), 50)
+
         prompt_validacion = f"""
         Eres un supervisor de calidad estricto. Tu tarea es validar si un 'Análisis' es coherente y se basa ESTRICTAMENTE en los 'Datos de Soporte' proporcionados.
         FORMATO OBLIGATORIO:
@@ -322,16 +307,19 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
     return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
 
 def clasificar_intencion(pregunta: str) -> str:
-    # ... (código sin cambios)
     prompt_orq = f"""
     Tu tarea es clasificar la intención del usuario. Presta especial atención a los verbos de acción y palabras clave. Responde con UNA SOLA PALABRA.
+
     1. `analista`: Si la pregunta pide explícitamente una interpretación, resumen, comparación o explicación.
        PALABRAS CLAVE PRIORITARIAS: analiza, compara, resume, explica, por qué, tendencia, insights, dame un análisis, haz un resumen.
        Si una de estas palabras clave está presente, la intención SIEMPRE es `analista`.
+
     2. `consulta`: Si la pregunta pide datos crudos (listas, conteos, totales) y NO contiene una palabra clave prioritaria de `analista`.
        Ejemplos: 'cuántos proveedores hay', 'lista todos los productos', 'muéstrame el total', 'y ahora por mes'.
+
     3. `conversacional`: Si es un saludo o una pregunta general no relacionada con datos.
        Ejemplos: 'hola', 'gracias', 'qué puedes hacer'.
+
     Pregunta del usuario: "{pregunta}"
     Clasificación:
     """
@@ -344,7 +332,6 @@ def clasificar_intencion(pregunta: str) -> str:
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
-    # ... (código sin cambios)
     if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
         for msg in reversed(st.session_state.get('messages', [])):
             content = msg.get('content', {})
@@ -358,7 +345,6 @@ def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
     return ejecutar_sql_en_lenguaje_natural(pregunta_usuario, hist_text)
 
 def orquestador(pregunta_usuario: str, chat_history: list):
-    # ... (código sin cambios)
     with st.expander("⚙️ Ver Proceso de IANA", expanded=False):
         hist_text = get_history_text(chat_history)
         clasificacion = clasificar_intencion(pregunta_usuario)
@@ -382,17 +368,24 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
 
 # ============================================
-# 3) Interfaz de Chat de Streamlit (<<< MODIFICADA >>>)
+# 3) Interfaz de Chat de Streamlit
 # ============================================
 
 # --- Lógica para procesar una pregunta (de voz o texto) ---
 def procesar_pregunta(prompt: str):
     """Función unificada para manejar la lógica de la conversación."""
+    if not prompt: return # Evita procesar entradas vacías
+    
     st.session_state.messages.append({"role": "user", "content": {"texto": prompt}})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
+        # Asegurarse de que todos los componentes de IA están listos
+        if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador, speech_client]):
+            st.error("La aplicación no está completamente inicializada. Revisa los errores de conexión o de API key.")
+            return
+
         res = orquestador(prompt, st.session_state.messages)
         st.session_state.messages.append({"role": "assistant", "content": res})
 
@@ -425,7 +418,6 @@ st.markdown("---")
 col_voz, col_texto = st.columns([1, 4])
 
 with col_voz:
-    # Componente para grabar audio
     wav_audio_data = st_audiorec(
         icon_size="2rem",
         recording_prompt="Grabando...",
@@ -434,22 +426,20 @@ with col_voz:
     )
 
 with col_texto:
-    # Input de texto como siempre
     prompt_texto = st.chat_input("... o escribe tu pregunta aquí")
 
 # --- Lógica para manejar las entradas ---
-if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador, speech_client]):
-    st.error("La aplicación no está completamente inicializada. Revisa los errores de conexión o de API key.")
-else:
-    # Procesar audio si lo hay
-    if wav_audio_data is not None:
-        texto_transcrito = transcribir_audio(speech_client, wav_audio_data)
-        if texto_transcrito:
-            st.info(f"Texto reconocido: *\"{texto_transcrito}\"*")
-            procesar_pregunta(texto_transcrito)
-        else:
-            st.warning("No se pudo reconocer ningún texto en el audio. Por favor, intenta de nuevo.")
-    
-    # Procesar texto si lo hay
-    if prompt_texto:
-        procesar_pregunta(prompt_texto)
+prompt_para_procesar = None
+if wav_audio_data is not None:
+    texto_transcrito = transcribir_audio(speech_client, wav_audio_data)
+    if texto_transcrito:
+        st.info(f"Texto reconocido: *\"{texto_transcrito}\"*")
+        prompt_para_procesar = texto_transcrito
+    else:
+        st.warning("No se pudo reconocer ningún texto en el audio. Por favor, intenta de nuevo.")
+
+if prompt_texto:
+    prompt_para_procesar = prompt_texto
+
+if prompt_para_procesar:
+    procesar_pregunta(prompt_para_procesar)
