@@ -6,7 +6,8 @@ langchain>=0.2.0
 langchain-google-genai>=2.0.0
 langchain-community>=0.2.0
 google-generativeai>=0.8.5
+
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
 python-dotenv>=1.0.0
 tabulate>=0.9.0
-faster-whisper>=1.0.3
-numpy>=1.26.0
