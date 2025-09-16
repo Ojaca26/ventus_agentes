@@ -3,12 +3,20 @@
 import streamlit as st
 import pandas as pd
 import re
+import tempfile
+from typing import Optional
+
 from sqlalchemy import text
+
+# LangChain + Gemini
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.utilities import SQLDatabase
 from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain.chains import create_sql_query_chain
+
+# Transcripción
+from faster_whisper import WhisperModel
 
 # ============================================
 # 0) Configuración de la Página y Título
@@ -74,13 +82,30 @@ def get_sql_agent(_llm, _db):
     if not _llm or not _db:
         return None
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
-        # Mantengo tu enfoque con toolkit para compatibilidad
         toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
         agent = create_sql_agent(llm=_llm, toolkit=toolkit, verbose=False, top_k=1000)
         st.success("✅ Agente SQL configurado.")
         return agent
 
 agente_sql = get_sql_agent(llm_sql, db)
+
+# ============================================
+# 1.b) Recurso del transcriptor de audio
+# ============================================
+
+@st.cache_resource
+def get_transcriber():
+    """
+    Carga el modelo de transcripción una sola vez.
+    Usa st.secrets['whisper_model_size'] si existe; por defecto 'small'.
+    """
+    try:
+        model_size = st.secrets.get("whisper_model_size", "small")  # tiny/base/small/medium/large-v3 (CPU: tiny/base/small)
+        model = WhisperModel(model_size, device="cpu", compute_type="int8")  # rápido en CPU
+        return model
+    except Exception as e:
+        st.warning(f"No se pudo inicializar el transcriptor: {e}")
+        return None
 
 # ============================================
 # 2) Funciones Auxiliares
@@ -123,13 +148,12 @@ def markdown_table_to_df(texto: str) -> pd.DataFrame:
     lineas = [l.rstrip() for l in texto.splitlines() if l.strip().startswith('|')]
     if not lineas:
         return pd.DataFrame()
-    # Filtra líneas separadoras tipo |---|
+    # Filtra separadores tipo |---|
     lineas = [l for l in lineas if not re.match(r'^\|\s*-{2,}', l)]
     filas = [[c.strip() for c in l.strip('|').split('|')] for l in lineas]
     if len(filas) < 2:
         return pd.DataFrame()
     header, data = filas[0], filas[1:]
-    # Alinea ancho de columnas si hay filas cortas
     max_cols = len(header)
     data = [r + ['']*(max_cols - len(r)) if len(r) < max_cols else r[:max_cols] for r in data]
     df = pd.DataFrame(data, columns=header)
@@ -141,7 +165,6 @@ def _df_preview(df: pd.DataFrame, n: int = 5) -> str:
     if df is None or df.empty:
         return ""
     try:
-        # Evita depender de tabulate si no está
         return df.head(n).to_markdown(index=False)
     except Exception:
         return df.head(n).to_string(index=False)
@@ -163,6 +186,52 @@ def _asegurar_select_only(sql: str) -> str:
         raise ValueError("Solo se permite ejecutar consultas SELECT.")
     sql_clean = re.sub(r'(?is)\blimit\s+\d+\s*$', '', sql_clean).strip()
     return sql_clean
+
+# ============================================
+# 2.b) Transcripción
+# ============================================
+
+def transcribir_audio(archivo_audio) -> Optional[str]:
+    """
+    Recibe un archivo subido por Streamlit (UploadedFile),
+    lo guarda temporalmente y devuelve la transcripción (auto-idioma).
+    """
+    if archivo_audio is None:
+        return None
+
+    model = get_transcriber()
+    if model is None:
+        st.error("El transcriptor no está disponible.")
+        return None
+
+    # Guardar temporalmente
+    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{archivo_audio.name}") as tmp:
+        tmp.write(archivo_audio.read())
+        ruta = tmp.name
+
+    st.info("🎧 Transcribiendo audio...")
+    try:
+        segments, info = model.transcribe(
+            ruta,
+            language=None,           # autodetect
+            beam_size=1,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=500),
+        )
+        texto = "".join([seg.text for seg in segments]).strip()
+        if not texto:
+            st.warning("No se pudo extraer texto del audio.")
+            return None
+
+        # Mostrar idioma detectado si lo hay
+        if getattr(info, "language", None):
+            st.caption(f"Idioma detectado: **{info.language}** · Prob: {getattr(info, 'language_probability', 0):.2f}")
+
+        st.success("✅ Transcripción completada.")
+        return texto
+    except Exception as e:
+        st.error(f"Error al transcribir: {e}")
+        return None
 
 # ============================================
 # 3) Agentes
@@ -189,7 +258,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         # Captura el último SELECT para evitar preámbulos
         m = re.search(r'(?is)(select\b.+)$', sql_query_bruta.strip())
         sql_query_limpia = m.group(1).strip() if m else sql_query_bruta.strip()
-        # Quita fences y LIMIT
+        # Quita fences y LIMIT y valida que sea SELECT
         sql_query_limpia = re.sub(r'(?is)^```sql|```$', '', sql_query_limpia).strip()
         sql_query_limpia = _asegurar_select_only(sql_query_limpia)
         st.code(sql_query_limpia, language='sql')
@@ -215,13 +284,13 @@ def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     )
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda..."):
-            res = agente_sql.invoke({"input": prompt_sql}) if isinstance(prompt_sql, dict) else agente_sql.invoke(prompt_sql)
-            texto = res.get("output") if isinstance(res, dict) else str(res)
+            res = agente_sql.invoke(prompt_sql)
+            texto = res["output"] if isinstance(res, dict) and "output" in res else str(res)
 
         st.info("📝 Intentando convertir la respuesta en una tabla de datos...")
         df_md = markdown_table_to_df(texto)
         if df_md.empty:
-            st.warning("La conversión de Markdown a tabla no produjo filas. Muestra la salida cruda.")
+            st.warning("La conversión de Markdown a tabla no produjo filas. Se mostrará la salida cruda.")
         return {"texto": texto, "df": df_md}
     except Exception as e:
         st.error(f"❌ El agente SQL experto también encontró un problema: {e}")
@@ -237,9 +306,7 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
             f'Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.'
         )
 
-    preview = _df_preview(df, 50)
-    if not preview:
-        preview = "(sin datos en vista previa; verifica la consulta)"
+    preview = _df_preview(df, 50) or "(sin datos en vista previa; verifica la consulta)"
 
     prompt_analisis = f"""{correccion_prompt}
 Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO y riguroso.
@@ -404,17 +471,33 @@ for message in st.session_state.messages:
         elif isinstance(content, str):
             st.markdown(content)
 
-prompt = st.chat_input("Pregunta por costos, proveedores, familia...")
-if prompt:
+# --- Entrada por audio (opcional) ---
+st.markdown("### 🎙️ Subir audio (opcional)")
+audio_file = st.file_uploader(
+    "Adjunta un archivo de audio (mp3, wav, m4a) con tu pregunta",
+    type=["mp3", "wav", "m4a"],
+    accept_multiple_files=False
+)
+
+texto_desde_audio = None
+if audio_file is not None:
+    texto_desde_audio = transcribir_audio(audio_file)
+    if texto_desde_audio:
+        st.text_area("Transcripción detectada", value=texto_desde_audio, height=120, help="Puedes editar el texto antes de enviar.")
+
+# --- Unificar entrada (audio o texto) ---
+prompt_text = texto_desde_audio if texto_desde_audio else st.chat_input("Pregunta por costos, proveedores, familia...")
+
+if prompt_text:
     if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador]):
         st.error("La aplicación no está completamente inicializada. Revisa los errores de conexión o de API key.")
     else:
-        st.session_state.messages.append({"role": "user", "content": {"texto": prompt}})
+        st.session_state.messages.append({"role": "user", "content": {"texto": prompt_text}})
         with st.chat_message("user"):
-            st.markdown(prompt)
+            st.markdown(prompt_text)
 
         with st.chat_message("assistant"):
-            res = orquestador(prompt, st.session_state.messages)
+            res = orquestador(prompt_text, st.session_state.messages)
             st.session_state.messages.append({"role": "assistant", "content": res})
 
             if res and res.get("tipo") != "error":
