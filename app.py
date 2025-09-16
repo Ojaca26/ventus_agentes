@@ -3,9 +3,8 @@
 import streamlit as st
 import pandas as pd
 import re
-import tempfile
+import io
 from typing import Optional
-
 from sqlalchemy import text
 
 # LangChain + Gemini
@@ -15,8 +14,8 @@ from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain.chains import create_sql_query_chain
 
-# Transcripción
-from faster_whisper import WhisperModel
+# Speech-to-text en memoria (sin guardar archivos)
+import speech_recognition as sr
 
 # ============================================
 # 0) Configuración de la Página y Título
@@ -44,12 +43,7 @@ def get_database_connection():
             db_host = creds["host"]
             db_name = creds["database"]
             uri = f"mysql+pymysql://{db_user}:{db_pass}@{db_host}/{db_name}"
-            engine_args = {
-                "pool_recycle": 3600,
-                "pool_pre_ping": True,
-                "pool_size": 5,
-                "max_overflow": 10,
-            }
+            engine_args = {"pool_recycle": 3600, "pool_pre_ping": True, "pool_size": 5, "max_overflow": 10}
             db = SQLDatabase.from_uri(uri, include_tables=["ventus"], engine_args=engine_args)
             st.success("✅ Conexión a la base de datos establecida.")
             return db
@@ -90,21 +84,55 @@ def get_sql_agent(_llm, _db):
 agente_sql = get_sql_agent(llm_sql, db)
 
 # ============================================
-# 1.b) Recurso del transcriptor de audio
+# 1.b) Speech Recognition (NO guarda archivos)
 # ============================================
 
 @st.cache_resource
-def get_transcriber():
+def get_recognizer():
+    # Un único recognizer reutilizable
+    r = sr.Recognizer()
+    # Opcionalmente, baja el umbral de energía si tus audios son suaves:
+    r.energy_threshold = 300
+    r.dynamic_energy_threshold = True
+    return r
+
+def transcribir_audio_en_memoria(archivo_audio) -> Optional[str]:
     """
-    Carga el modelo de transcripción una sola vez.
-    Usa st.secrets['whisper_model_size'] si existe; por defecto 'small'.
+    Recibe un archivo subido por Streamlit (UploadedFile),
+    lo convierte a flujo de bytes en memoria y devuelve la transcripción.
+    ✅ No se escribe a disco ningún .mp3/.wav.
     """
+    if archivo_audio is None:
+        return None
+
+    r = get_recognizer()
+    idioma = st.secrets.get("stt_language", "es-419")  # 'es-ES', 'es-MX', 'es-AR', etc.
+
+    st.info("🎧 Transcribiendo audio (sin guardar archivos)...")
     try:
-        model_size = st.secrets.get("whisper_model_size", "small")  # tiny/base/small/medium/large-v3 (CPU: tiny/base/small)
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")  # rápido en CPU
-        return model
+        data = archivo_audio.getvalue()  # bytes en memoria
+        # SpeechRecognition soporta WAV/AIFF/FLAC nativos.
+        # Para MP3/M4A usa pydub + ffmpeg transparéntemente.
+        with sr.AudioFile(io.BytesIO(data)) as source:
+            audio = r.record(source)
+
+        # Servicio gratuito de Google Web Speech (tiene límites)
+        texto = r.recognize_google(audio, language=idioma)
+        if not texto.strip():
+            st.warning("No se pudo extraer texto del audio.")
+            return None
+
+        st.success("✅ Transcripción completada.")
+        return texto.strip()
+
+    except sr.UnknownValueError:
+        st.warning("No pude entender el audio.")
+        return None
+    except sr.RequestError as e:
+        st.error(f"Error del servicio de reconocimiento: {e}")
+        return None
     except Exception as e:
-        st.warning(f"No se pudo inicializar el transcriptor: {e}")
+        st.error(f"Error al transcribir: {e}")
         return None
 
 # ============================================
@@ -112,7 +140,6 @@ def get_transcriber():
 # ============================================
 
 def _coerce_numeric_series(s: pd.Series) -> pd.Series:
-    # Limpia $ , % espacios duros y suaves
     s2 = (
         s.astype(str)
          .str.replace(r'[\u00A0\s]', '', regex=True)
@@ -148,7 +175,6 @@ def markdown_table_to_df(texto: str) -> pd.DataFrame:
     lineas = [l.rstrip() for l in texto.splitlines() if l.strip().startswith('|')]
     if not lineas:
         return pd.DataFrame()
-    # Filtra separadores tipo |---|
     lineas = [l for l in lineas if not re.match(r'^\|\s*-{2,}', l)]
     filas = [[c.strip() for c in l.strip('|').split('|')] for l in lineas]
     if len(filas) < 2:
@@ -180,58 +206,11 @@ def interpretar_resultado_sql(res: dict) -> dict:
     return res
 
 def _asegurar_select_only(sql: str) -> str:
-    """Permite solo SELECTs. Quita ; finales y LIMIT si existe."""
     sql_clean = sql.strip().rstrip(';')
     if not re.match(r'(?is)^\s*select\b', sql_clean):
         raise ValueError("Solo se permite ejecutar consultas SELECT.")
     sql_clean = re.sub(r'(?is)\blimit\s+\d+\s*$', '', sql_clean).strip()
     return sql_clean
-
-# ============================================
-# 2.b) Transcripción
-# ============================================
-
-def transcribir_audio(archivo_audio) -> Optional[str]:
-    """
-    Recibe un archivo subido por Streamlit (UploadedFile),
-    lo guarda temporalmente y devuelve la transcripción (auto-idioma).
-    """
-    if archivo_audio is None:
-        return None
-
-    model = get_transcriber()
-    if model is None:
-        st.error("El transcriptor no está disponible.")
-        return None
-
-    # Guardar temporalmente
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{archivo_audio.name}") as tmp:
-        tmp.write(archivo_audio.read())
-        ruta = tmp.name
-
-    st.info("🎧 Transcribiendo audio...")
-    try:
-        segments, info = model.transcribe(
-            ruta,
-            language=None,           # autodetect
-            beam_size=1,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500),
-        )
-        texto = "".join([seg.text for seg in segments]).strip()
-        if not texto:
-            st.warning("No se pudo extraer texto del audio.")
-            return None
-
-        # Mostrar idioma detectado si lo hay
-        if getattr(info, "language", None):
-            st.caption(f"Idioma detectado: **{info.language}** · Prob: {getattr(info, 'language_probability', 0):.2f}")
-
-        st.success("✅ Transcripción completada.")
-        return texto
-    except Exception as e:
-        st.error(f"Error al transcribir: {e}")
-        return None
 
 # ============================================
 # 3) Agentes
@@ -244,7 +223,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     ---
     <<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>
     1. La columna `Producto` contiene descripciones largas.
-    2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), SIEMPRE usa `WHERE LOWER(Producto) LIKE '%palabra%'`.
+    2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), usa `WHERE LOWER(Producto) LIKE '%palabra%'`.
     3. Ejemplo: "cuántos transportes..." -> `WHERE LOWER(Producto) LIKE '%transporte%'`.
     4. No agregues LIMIT.
     ---
@@ -255,10 +234,8 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     try:
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
-        # Captura el último SELECT para evitar preámbulos
         m = re.search(r'(?is)(select\b.+)$', sql_query_bruta.strip())
         sql_query_limpia = m.group(1).strip() if m else sql_query_bruta.strip()
-        # Quita fences y LIMIT y valida que sea SELECT
         sql_query_limpia = re.sub(r'(?is)^```sql|```$', '', sql_query_limpia).strip()
         sql_query_limpia = _asegurar_select_only(sql_query_limpia)
         st.code(sql_query_limpia, language='sql')
@@ -411,7 +388,6 @@ Clasificación:
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
-    # Reutiliza DF anterior si el usuario lo sugiere
     if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
         for msg in reversed(st.session_state.get('messages', [])):
             if msg.get('role') == 'assistant':
@@ -471,22 +447,23 @@ for message in st.session_state.messages:
         elif isinstance(content, str):
             st.markdown(content)
 
-# --- Entrada por audio (opcional) ---
-st.markdown("### 🎙️ Subir audio (opcional)")
+# --- Entrada por audio (opcional, sin guardar en disco) ---
+st.markdown("### 🎙️ Hablar (opcional)")
 audio_file = st.file_uploader(
-    "Adjunta un archivo de audio (mp3, wav, m4a) con tu pregunta",
-    type=["mp3", "wav", "m4a"],
+    "Adjunta un audio con tu pregunta (wav, aiff, flac, mp3, m4a). No se guardará ningún archivo.",
+    type=["wav", "aiff", "flac", "mp3", "m4a"],
     accept_multiple_files=False
 )
 
 texto_desde_audio = None
 if audio_file is not None:
-    texto_desde_audio = transcribir_audio(audio_file)
+    texto_desde_audio = transcribir_audio_en_memoria(audio_file)
     if texto_desde_audio:
-        st.text_area("Transcripción detectada", value=texto_desde_audio, height=120, help="Puedes editar el texto antes de enviar.")
+        st.text_area("Transcripción detectada (puedes editarla antes de enviar):",
+                     value=texto_desde_audio, height=120, key="transcripcion_editable")
 
 # --- Unificar entrada (audio o texto) ---
-prompt_text = texto_desde_audio if texto_desde_audio else st.chat_input("Pregunta por costos, proveedores, familia...")
+prompt_text = st.session_state.get("transcripcion_editable") if texto_desde_audio else st.chat_input("Pregunta por costos, proveedores, familia...")
 
 if prompt_text:
     if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador]):
