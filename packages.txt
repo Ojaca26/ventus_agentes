@@ -1,11 +1,4 @@
-# packages.txt
-
-# Dependencias básicas de compilación
 build-essential
 pkg-config
-
-# Dependencias de MySQL (si cambias de pymysql a mysqlclient)
 default-libmysqlclient-dev
-
-# Opcional: soporte SSL y conexiones seguras
 libssl-dev
