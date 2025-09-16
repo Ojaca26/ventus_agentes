@@ -1,9 +1,8 @@
-streamlit
-opencv-python-headless
-pillow
-numpy
-pandas
-google-generativeai
-face_recognition
-dlib
-openpyxl
+streamlit>=1.37.0
+pandas>=2.0.0
+sqlalchemy>=2.0.30
+pymysql>=1.1.0
+langchain>=0.2.0
+langchain-google-genai>=2.0.0
+langchain-community>=0.2.0
+google-generativeai>=0.8.5
