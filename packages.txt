@@ -1,11 +1,6 @@
 cmake
 build-essential
-pkg-config
-libboost-all-dev
-libssl-dev
-libffi-dev
-libatlas-base-dev
-libjpeg-dev
-zlib1g-dev
 libgl1
 libglib2.0-0
+libjpeg-dev
+zlib1g-dev
