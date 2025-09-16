@@ -1,445 +1,378 @@
-# app.py
-
 import streamlit as st
+import cv2
 import pandas as pd
-import re
-from sqlalchemy import text
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_community.utilities import SQLDatabase
-from langchain.agents import create_sql_agent
-from langchain.agents.agent_toolkits import SQLDatabaseToolkit
-from langchain.chains import create_sql_query_chain
-
-# <<< NUEVOS IMPORTS para Voz a Texto >>>
-from st_audiorec import st_audiorec
-from google.cloud import speech
-import os
+from PIL import Image, ImageOps
+import numpy as np
+import io
+import google.generativeai as genai
 import json
+import re
+import face_recognition
 
-# ============================================
-# 0) Configuración de la Página y Título
-# ============================================
-st.set_page_config(page_title="IANA para Ventus", page_icon="logo_ventus.png", layout="wide") 
+# --- CONFIGURACIÓN ---
+ARCHIVO_EXCEL = 'datos_cedulas_colombia.xlsx'
 
-col1, col2 = st.columns([1, 4]) 
+# Configurar la API de Gemini (la clave se toma de st.secrets)
+try:
+    api_key = st.secrets.get("GEMINI_API_KEY")
+except Exception:
+    api_key = None
 
-with col1:
-    st.image("logo_ventus.png", width=120) 
-
-with col2:
-    st.title("IANA: Tu Asistente IA para Análisis de Datos")
-    st.markdown("Soy la red de agentes IA de **VENTUS**. Hazme una pregunta sobre los datos del proyecto IGUANA.")
-
-# ============================================
-# <<< NUEVO >>> Agente de Voz a Texto
-# ============================================
-
-@st.cache_resource
-def get_speech_client():
-    """Crea y cachea un cliente para la API de Speech-to-Text."""
+GEMINI_CONFIGURADO = bool(api_key)
+if GEMINI_CONFIGURADO:
     try:
-        credentials_json = dict(st.secrets.gcp_service_account)
-        with open("gcp_credentials.json", "w") as f:
-            json.dump(credentials_json, f)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcp_credentials.json"
-        speech_client = speech.SpeechClient()
-        os.remove("gcp_credentials.json")
-        return speech_client
+        genai.configure(api_key=api_key)
     except Exception as e:
-        st.error(f"Error al configurar el cliente de Speech-to-Text: {e}. Revisa tus credenciales en st.secrets.")
-        return None
+        st.warning(f"No se pudo configurar Gemini: {e}")
+        GEMINI_CONFIGURADO = False
+else:
+    st.info("⚠️ Gemini no configurado. Podrás cargar y comparar imágenes, pero no extraer datos con IA.")
 
-@st.cache_data
-def transcribir_audio(_speech_client, audio_bytes):
-    """Envía el audio a la API de Google y devuelve el texto transcrito."""
-    if not _speech_client or not audio_bytes:
-        return ""
-    
-    with st.spinner("🎤 Transcribiendo tu voz..."):
-        try:
-            audio = speech.RecognitionAudio(content=audio_bytes)
-            config = speech.RecognitionConfig(
-                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-                sample_rate_hertz=16000,
-                language_code="es-CO",
-                model="telephony" 
-            )
-            response = _speech_client.recognize(config=config, audio=audio)
-            
-            if response.results:
-                return response.results[0].alternatives[0].transcript
-            else:
-                return ""
-        except Exception as e:
-            st.error(f"Error durante la transcripción: {e}")
-            return ""
+# ---------- UTILIDADES DE IMAGEN ----------
 
-speech_client = get_speech_client()
+def fix_orientation(img_pil: Image.Image) -> Image.Image:
+    """Corrige orientación EXIF y retorna RGB."""
+    img = ImageOps.exif_transpose(img_pil)
+    return img.convert("RGB")
 
-# ============================================
-# 1) Conexión a la Base de Datos y LLMs
-# ============================================
+def pil_to_cv(img_pil: Image.Image) -> np.ndarray:
+    """PIL RGB -> OpenCV BGR"""
+    return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
-@st.cache_resource
-def get_database_connection():
-    with st.spinner("🔌 Conectando a la base de datos de Ventus..."):
-        try:
-            db_user = st.secrets["db_credentials"]["user"]
-            db_pass = st.secrets["db_credentials"]["password"]
-            db_host = st.secrets["db_credentials"]["host"]
-            db_name = st.secrets["db_credentials"]["database"]
-            uri = f"mysql+pymysql://{db_user}:{db_pass}@{db_host}/{db_name}"
-            engine_args = {"pool_recycle": 3600, "pool_pre_ping": True}
-            db = SQLDatabase.from_uri(uri, include_tables=["ventus"], engine_args=engine_args) 
-            st.success("✅ Conexión a la base de datos establecida.")
-            return db
-        except Exception as e:
-            st.error(f"Error al conectar a la base de datos: {e}")
-            return None
+def cv_to_pil(img_cv: np.ndarray) -> Image.Image:
+    """OpenCV BGR -> PIL RGB"""
+    return Image.fromarray(cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB))
 
-@st.cache_resource
-def get_llms():
-    with st.spinner("🧠 Inicializando la red de agentes IANA..."):
-        try:
-            api_key = st.secrets["google_api_key"]
-            llm_sql = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
-            llm_analista = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
-            llm_orq = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key)
-            llm_validador = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key) 
-            st.success("✅ Agentes de IANA listos.")
-            return llm_sql, llm_analista, llm_orq, llm_validador
-        except Exception as e:
-            st.error(f"Error al inicializar los LLMs. Asegúrate de que tu API key es correcta. Error: {e}")
-            return None, None, None, None
+def enhance_for_ocr(img_cv: np.ndarray) -> np.ndarray:
+    """Ligero realce para texto/fotografía ID."""
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    cl = clahe.apply(gray)
+    sharp = cv2.GaussianBlur(cl, (0,0), 1.0)
+    unsharp = cv2.addWeighted(cl, 1.5, sharp, -0.5, 0)  # unsharp masking suave
+    return cv2.cvtColor(unsharp, cv2.COLOR_GRAY2BGR)
 
-db = get_database_connection()
-llm_sql, llm_analista, llm_orq, llm_validador = get_llms()
+def reordenar_puntos(puntos):
+    rect = np.zeros((4, 2), dtype="float32")
+    s = puntos.sum(axis=1)
+    rect[0] = puntos[np.argmin(s)]
+    rect[2] = puntos[np.argmax(s)]
+    diff = np.diff(puntos, axis=1)
+    rect[1] = puntos[np.argmin(diff)]
+    rect[3] = puntos[np.argmax(diff)]
+    return rect
 
-@st.cache_resource
-def get_sql_agent(_llm, _db):
-    if not _llm or not _db: return None
-    with st.spinner("🛠️ Configurando agente SQL de IANA..."):
-        toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
-        agent = create_sql_agent(llm=_llm, toolkit=toolkit, verbose=False, top_k=1000)
-        st.success("✅ Agente SQL configurado.")
-        return agent
+def corregir_perspectiva(imagen_pil: Image.Image) -> Image.Image:
+    """Detecta el borde del carnet y corrige perspectiva."""
+    try:
+        img = pil_to_cv(imagen_pil)
+        total_image_area = img.shape[0] * img.shape[1]
+        min_area_ratio = 0.08  # 8% del área total (ligeramente más permisivo)
 
-agente_sql = get_sql_agent(llm_sql, db)
+        img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        img_blur = cv2.GaussianBlur(img_gray, (5, 5), 0)
+        img_canny = cv2.Canny(img_blur, 60, 180)
 
-# ============================================
-# Funciones Auxiliares
-# ============================================
-def get_history_text(chat_history: list, n_turns=3) -> str:
-    if not chat_history or len(chat_history) <= 1: return ""
-    history_text = []
-    relevant_history = chat_history[-(n_turns * 2 + 1) : -1]
-    for msg in relevant_history:
-        content = msg.get("content", {})
-        text_content = ""
-        if isinstance(content, dict): text_content = content.get("texto", "") 
-        elif isinstance(content, str): text_content = content
-        if text_content:
-            role = "Usuario" if msg["role"] == "user" else "IANA"
-            history_text.append(f"{role}: {text_content}")
-    if not history_text: return ""
-    return "\n--- Contexto de Conversación Anterior ---\n" + "\n".join(history_text) + "\n--- Fin del Contexto ---\n"
+        contornos, _ = cv2.findContours(img_canny, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contornos = sorted(contornos, key=cv2.contourArea, reverse=True)[:8]
 
-def markdown_table_to_df(texto: str) -> pd.DataFrame:
-    lineas = [l.strip() for l in texto.splitlines() if l.strip().startswith('|')]
-    if not lineas: return pd.DataFrame()
-    lineas = [l for l in lineas if not re.match(r'^\|\s*-', l)]
-    filas = [[c.strip() for c in l.strip('|').split('|')] for l in lineas]
-    if len(filas) < 2: return pd.DataFrame()
-    header, data = filas[0], filas[1:]
-    df = pd.DataFrame(data, columns=header)
-    for c in df.columns:
-        s = df[c].astype(str).str.replace(',', '', regex=False).str.replace(' ', '', regex=False)
-        try: df[c] = pd.to_numeric(s)
-        except Exception: df[c] = s
-    return df
+        carnet_contour = None
+        for contorno in contornos:
+            perimetro = cv2.arcLength(contorno, True)
+            approx = cv2.approxPolyDP(contorno, 0.02 * perimetro, True)
+            if len(approx) == 4 and cv2.contourArea(approx) > min_area_ratio * total_image_area:
+                carnet_contour = approx
+                break
 
-def _df_preview(df: pd.DataFrame, n: int = 5) -> str:
-    if df is None or df.empty: return ""
-    try: return df.head(n).to_markdown(index=False)
-    except Exception: return df.head(n).to_string(index=False)
+        if carnet_contour is None:
+            st.warning("No se detectó un contorno claro de tarjeta. Se usa la imagen completa.")
+            return imagen_pil
 
-def interpretar_resultado_sql(res: dict) -> dict:
-    df = res.get("df")
-    if df is not None and not df.empty and res.get("texto") is None:
-        if df.shape == (1, 1):
-            valor = df.iloc[0, 0]
-            nombre_columna = df.columns[0]
-            res["texto"] = f"La respuesta para '{nombre_columna}' es: **{valor}**"
-            st.info("💡 Resultado numérico interpretado para una respuesta directa.")
-    return res
+        pts_src = reordenar_puntos(carnet_contour.reshape(4, 2))
+        wA = np.linalg.norm(pts_src[0] - pts_src[1])
+        wB = np.linalg.norm(pts_src[2] - pts_src[3])
+        hA = np.linalg.norm(pts_src[0] - pts_src[3])
+        hB = np.linalg.norm(pts_src[1] - pts_src[2])
+        width = int(max(wA, wB))
+        height = int(max(hA, hB))
 
-# ============================================
-# Funciones de Agentes
-# ============================================
-def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
-    st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
-    prompt_con_instrucciones = f"""
-    Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.
-    ---
-    <<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>
-    1. La columna `Producto` contiene descripciones largas.
-    2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), SIEMPRE debes usar `LIKE '%%'` para buscar dentro de la columna `Producto`.
-    3. EJEMPLO: Si el usuario pregunta "cuántos transportes...", debes generar `WHERE Producto LIKE '%transporte%'`.
-    ---
-    {hist_text}
-    Pregunta del usuario: "{pregunta_usuario}"
+        dst = np.float32([[0,0],[width,0],[width,height],[0,height]])
+        M = cv2.getPerspectiveTransform(pts_src, dst)
+        warped = cv2.warpPerspective(img, M, (width, height))
+
+        # Realce suave (ayuda a OCR/foto)
+        warped = enhance_for_ocr(warped)
+        return cv_to_pil(warped)
+
+    except Exception as e:
+        st.error(f"Error en la corrección de perspectiva: {e}")
+        return imagen_pil
+
+# ---------- GEMINI: EXTRACCIÓN ESTRUCTURADA ----------
+
+def extraer_datos_con_gemini(imagenes_pil):
     """
-    try:
-        query_chain = create_sql_query_chain(llm_sql, db)
-        sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
-        select_pos = sql_query_bruta.upper().rfind("SELECT")
-        sql_query_limpia = sql_query_bruta[select_pos:] if select_pos != -1 else sql_query_bruta
-        sql_query_limpia = re.sub(r"^\s*```sql\s*|\s*```\s*$", "", sql_query_limpia, flags=re.IGNORECASE).strip()
-        sql_query_limpia = re.sub(r'LIMIT\s+\d+\s*;?$', '', sql_query_limpia, flags=re.IGNORECASE | re.DOTALL).strip()
-        st.code(sql_query_limpia, language='sql')
-        with st.spinner("⏳ Ejecutando consulta..."):
-            with db._engine.connect() as conn:
-                df = pd.read_sql(text(sql_query_limpia), conn)
-        st.success("✅ ¡Consulta ejecutada!")
-        return {"sql": sql_query_limpia, "df": df}
-    except Exception as e:
-        st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Error: {e}")
-        return {"sql": None, "df": None, "error": str(e)}
-
-def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
-    st.info("🤔 Activando el agente SQL experto como plan B.")
-    prompt_sql = (f"Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown. NUNCA resumas. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
-    try:
-        with st.spinner("💬 Pidiendo al agente SQL que responda..."):
-            res = agente_sql.invoke(prompt_sql)
-            texto = res["output"] if isinstance(res, dict) and "output" in res else str(res)
-        st.info("📝 Intentando convertir la respuesta en una tabla de datos...")
-        df_md = markdown_table_to_df(texto)
-        return {"texto": texto, "df": df_md}
-    except Exception as e:
-        st.error(f"❌ El agente SQL experto también encontró un problema: {e}")
-        return {"texto": f"[SQL_ERROR] {e}", "df": pd.DataFrame()}
-
-def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame | None, feedback: str = None):
-    st.info("\n🧠 El analista experto está examinando los datos...")
-    correccion_prompt = ""
-    if feedback:
-        st.warning(f"⚠️ Reintentando con feedback: {feedback}")
-        correccion_prompt = f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior fue incorrecta. Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.'
-    
-    prompt_analisis = f"""{correccion_prompt}
-    Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO y riguroso.
-    ---
-    <<< REGLAS CRÍTICAS DE PRECISIÓN >>>
-    1.  **NO ALUCINAR**: NUNCA inventes números, totales, porcentajes o nombres de productos/categorías que no estén EXPRESAMENTE en la tabla de 'Datos'. Tu respuesta debe ser 100% verificable con los datos proporcionados.
-    2.  **MANEJO DE DATOS INCOMPLETOS (SPARSE DATA)**: Es normal que los datos no contengan entradas para todos los meses o categorías. Tu tarea es reportar sobre los datos que SÍ existen. Es un hallazgo importante señalar los vacíos. EJEMPLO: "No se registraron datos para el mes de Marzo". NUNCA inventes datos para rellenar vacíos.
-    3.  **VERIFICAR CÁLCULOS**: Antes de escribir un número, verifica dos veces el cálculo (SUMA, CONTEO, PROMEDIO) directamente de la tabla de 'Datos'.
-    4.  **CITAR DATOS**: Basa CADA afirmación que hagas en los datos visibles en la tabla. No hagas suposiciones.
-    ---
-    Pregunta Original: {pregunta_usuario}\n{hist_text}
-    Datos para tu análisis (usa SÓLO estos datos):
-    {_df_preview(df, 50)} 
-    ---
-    FORMATO OBLIGATORIO:
-    📌 Resumen Ejecutivo:\n- (Hallazgos principales basados ESTRICTAMENTE en los datos.)
-    🔍 Números de referencia:\n- (Cifras clave calculadas DIRECTAMENTE de los datos.)"""
-    with st.spinner("💡 Generando análisis avanzado..."):
-        analisis = llm_analista.invoke(prompt_analisis).content
-    st.success("💡 ¡Análisis completado!")
-    return analisis
-
-def responder_conversacion(pregunta_usuario: str, hist_text: str):
-    st.info("💬 Activando modo de conversación...")
-    prompt_personalidad = f"""
-    Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.
-    Si el usuario hace un comentario casual, responde amablemente y redirígelo a tus capacidades.
-    {hist_text}\nPregunta: "{pregunta_usuario}" """
-    respuesta = llm_analista.invoke(prompt_personalidad).content
-    return {"texto": respuesta, "df": None, "analisis": None}
-
-# ============================================
-# Lógica Principal y Orquestador
-# ============================================
-def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
-    MAX_INTENTOS = 2
-    for intento in range(MAX_INTENTOS):
-        st.info(f"🕵️‍♀️ Supervisor de Calidad: Verificando análisis (Intento {intento + 1})...")
-        
-        contenido_respuesta = res_analisis.get("analisis", "")
-        if not contenido_respuesta.strip():
-            return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
-
-        df_preview = _df_preview(res_analisis.get("df"), 50)
-
-        prompt_validacion = f"""
-        Eres un supervisor de calidad estricto. Tu tarea es validar si un 'Análisis' es coherente y se basa ESTRICTAMENTE en los 'Datos de Soporte' proporcionados.
-        FORMATO OBLIGATORIO:
-        - Si el análisis se basa 100% en los datos, responde: APROBADO
-        - Si el análisis alucina, inventa datos o no es relevante, responde: RECHAZADO: [razón corta y accionable]
-        ---
-        Pregunta Original del Usuario: "{pregunta_usuario}"
-        ---
-        Datos de Soporte (la tabla que la IA usó para el análisis):
-        {df_preview}
-        ---
-        Análisis a Evaluar:
-        "{contenido_respuesta}"
-        ---
-        Evaluación: ¿El análisis se basa fielmente en los Datos de Soporte?
-        """
-        try:
-            resultado_validacion = llm_validador.invoke(prompt_validacion).content.strip()
-            if resultado_validacion.upper().startswith("APROBADO"):
-                st.success("✅ Análisis aprobado por el Supervisor.")
-                return res_analisis 
-            elif resultado_validacion.upper().startswith("RECHAZADO"):
-                feedback_previo = resultado_validacion.split(":", 1)[1].strip() if ":" in resultado_validacion else "Razón no especificada."
-                st.warning(f"❌ Análisis rechazado. Feedback: {feedback_previo}")
-                if intento < MAX_INTENTOS - 1:
-                    st.info("🔄 Regenerando análisis con feedback...")
-                    res_analisis["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_analisis.get("df"), feedback=feedback_previo)
-                else:
-                    return {"tipo": "error", "texto": "El análisis no fue satisfactorio incluso después de una corrección."}
-            else:
-                return {"tipo": "error", "texto": "Respuesta ambigua del validador."}
-        except Exception as e:
-            return {"tipo": "error", "texto": f"Excepción durante la validación: {e}"}
-    return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
-
-def clasificar_intencion(pregunta: str) -> str:
-    prompt_orq = f"""
-    Tu tarea es clasificar la intención del usuario. Presta especial atención a los verbos de acción y palabras clave. Responde con UNA SOLA PALABRA.
-
-    1. `analista`: Si la pregunta pide explícitamente una interpretación, resumen, comparación o explicación.
-       PALABRAS CLAVE PRIORITARIAS: analiza, compara, resume, explica, por qué, tendencia, insights, dame un análisis, haz un resumen.
-       Si una de estas palabras clave está presente, la intención SIEMPRE es `analista`.
-
-    2. `consulta`: Si la pregunta pide datos crudos (listas, conteos, totales) y NO contiene una palabra clave prioritaria de `analista`.
-       Ejemplos: 'cuántos proveedores hay', 'lista todos los productos', 'muéstrame el total', 'y ahora por mes'.
-
-    3. `conversacional`: Si es un saludo o una pregunta general no relacionada con datos.
-       Ejemplos: 'hola', 'gracias', 'qué puedes hacer'.
-
-    Pregunta del usuario: "{pregunta}"
-    Clasificación:
+    Envía 1+ imágenes a Gemini y fuerza respuesta JSON.
+    Si no está configurado, retorna dict de error.
     """
-    try:
-        opciones_validas = ["consulta", "analista", "conversacional"]
-        respuesta_llm = llm_orq.invoke(prompt_orq).content.strip().lower().replace('"', '').replace("'", "")
-        if respuesta_llm in opciones_validas: return respuesta_llm
-        return "conversacional"
-    except Exception:
-        return "conversacional"
+    if not GEMINI_CONFIGURADO:
+        return {"Error": "API de Gemini no configurada.", "es_cedula_colombiana": False}
 
-def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
-    if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
-        for msg in reversed(st.session_state.get('messages', [])):
-            content = msg.get('content', {})
-            if msg['role'] == 'assistant' and isinstance(content, dict) and content.get('df') is not None:
-                st.info("💡 Usando datos de la respuesta anterior para la nueva solicitud.")
-                return {"df": content['df']}
-
-    res_real = ejecutar_sql_real(pregunta_usuario, hist_text)
-    if res_real.get("df") is not None and not res_real["df"].empty:
-        return res_real
-    return ejecutar_sql_en_lenguaje_natural(pregunta_usuario, hist_text)
-
-def orquestador(pregunta_usuario: str, chat_history: list):
-    with st.expander("⚙️ Ver Proceso de IANA", expanded=False):
-        hist_text = get_history_text(chat_history)
-        clasificacion = clasificar_intencion(pregunta_usuario)
-        st.success(f"✅ ¡Intención detectada! Tarea: {clasificacion.upper()}.")
-        
-        if clasificacion == "conversacional":
-            return responder_conversacion(pregunta_usuario, hist_text)
-
-        res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
-        
-        if res_datos.get("df") is None or res_datos["df"].empty:
-            return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
-
-        if clasificacion == "consulta":
-            st.success("✅ Consulta directa completada.")
-            return interpretar_resultado_sql(res_datos)
-        
-        if clasificacion == "analista":
-            st.info("🧠 Generando análisis inicial...")
-            res_datos["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_datos.get("df"))
-            return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
-
-# ============================================
-# 3) Interfaz de Chat de Streamlit
-# ============================================
-
-# --- Lógica para procesar una pregunta (de voz o texto) ---
-def procesar_pregunta(prompt: str):
-    """Función unificada para manejar la lógica de la conversación."""
-    if not prompt: return # Evita procesar entradas vacías
-    
-    st.session_state.messages.append({"role": "user", "content": {"texto": prompt}})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        # Asegurarse de que todos los componentes de IA están listos
-        if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador, speech_client]):
-            st.error("La aplicación no está completamente inicializada. Revisa los errores de conexión o de API key.")
-            return
-
-        res = orquestador(prompt, st.session_state.messages)
-        st.session_state.messages.append({"role": "assistant", "content": res})
-
-        if res and res.get("tipo") != "error":
-            if res.get("texto"): st.markdown(res["texto"])
-            if res.get("df") is not None and not res["df"].empty: st.dataframe(res["df"])
-            if res.get("analisis"):
-                st.markdown("---")
-                st.markdown("### 🧠 Análisis de IANA") 
-                st.markdown(res["analisis"])
-        elif res:
-            st.error(res.get("texto", "Ocurrió un error inesperado."))
-
-# --- Mostrar historial de chat ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Ventus. ¿Qué te gustaría saber?"}}]
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        content = message.get("content", {})
-        if isinstance(content, dict):
-            if "texto" in content and content["texto"]: st.markdown(content["texto"])
-            if "df" in content and content["df"] is not None and not content["df"].empty: st.dataframe(content["df"])
-            if "analisis" in content and content["analisis"]: st.markdown(content["analisis"])
-        elif isinstance(content, str):
-             st.markdown(content)
-
-# --- Contenedor de Inputs (Voz y Texto) ---
-st.markdown("---")
-col_voz, col_texto = st.columns([1, 4])
-
-with col_voz:
-    wav_audio_data = st_audiorec(
-        icon_size="2rem",
-        recording_prompt="Grabando...",
-        neutral_prompt="Habla con IANA 🎙️",
-        pause_prompt=""
+    # Modelo rápido para visión + JSON
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        generation_config={
+            "temperature": 0.1,
+            "response_mime_type": "application/json"
+        }
     )
 
-with col_texto:
-    prompt_texto = st.chat_input("... o escribe tu pregunta aquí")
+    prompt = (
+        "Eres experto analizando Cédula de Ciudadanía de Colombia. "
+        "Analiza las imágenes proporcionadas. "
+        "Responde SOLO un JSON con estas claves exactamente:\n"
+        "{\n"
+        "  \"es_cedula_colombiana\": boolean,\n"
+        "  \"NUIP\": string,\n"
+        "  \"Apellidos\": string,\n"
+        "  \"Nombres\": string,\n"
+        "  \"Fecha de nacimiento\": string,\n"
+        "  \"Lugar de nacimiento\": string,\n"
+        "  \"Estatura\": string,\n"
+        "  \"Sexo\": string,\n"
+        "  \"GS RH\": string,\n"
+        "  \"Fecha y lugar de expedición\": string\n"
+        "}\n"
+        "Si no es cédula colombiana, responde: {\"es_cedula_colombiana\": false}.\n"
+        "Si algún campo no aparece, usa exactamente \"No encontrado\"."
+    )
 
-# --- Lógica para manejar las entradas ---
-prompt_para_procesar = None
-if wav_audio_data is not None:
-    texto_transcrito = transcribir_audio(speech_client, wav_audio_data)
-    if texto_transcrito:
-        st.info(f"Texto reconocido: *\"{texto_transcrito}\"*")
-        prompt_para_procesar = texto_transcrito
+    parts = [prompt] + imagenes_pil
+    try:
+        resp = model.generate_content(parts)
+        # Con response_mime_type=application/json, resp.text DEBE ser JSON puro
+        return json.loads(resp.text)
+    except Exception as e:
+        st.error(f"Error al procesar respuesta de Gemini: {e}")
+        # Fallback suave: intenta “pescar” JSON si vino texto mezclado
+        try:
+            text = getattr(resp, "text", "") if 'resp' in locals() else ""
+            m = re.search(r'\{[\s\S]*\}', text)
+            if m:
+                return json.loads(m.group(0))
+        except Exception:
+            pass
+        return {"Error": "Fallo en la comunicación con la IA.", "es_cedula_colombiana": False}
+
+# ---------- VERIFICACIÓN FACIAL ----------
+
+def crop_largest_face(img_pil: Image.Image, pad_ratio: float = 0.25) -> Image.Image | None:
+    """
+    Encuentra el rostro más grande y devuelve un recorte ampliado.
+    Retorna None si no hay rostros.
+    """
+    np_img = np.array(img_pil)  # RGB
+    boxes = face_recognition.face_locations(np_img, model="hog")  # 'cnn' si tienes CUDA
+    if not boxes:
+        return None
+
+    # face_locations -> (top, right, bottom, left)
+    # Seleccionar el rostro con mayor área
+    def area(b): 
+        t, r, btm, l = b
+        return max(0, btm - t) * max(0, r - l)
+
+    box = max(boxes, key=area)
+    t, r, btm, l = box
+    h, w = np_img.shape[:2]
+
+    # Padding proporcional
+    pad_y = int((btm - t) * pad_ratio)
+    pad_x = int((r - l) * pad_ratio)
+    t2 = max(0, t - pad_y)
+    b2 = min(h, btm + pad_y)
+    l2 = max(0, l - pad_x)
+    r2 = min(w, r + pad_x)
+
+    face = np_img[t2:b2, l2:r2]
+    if face.size == 0:
+        return None
+    return Image.fromarray(face)
+
+def comparar_rostros(img_cedula_pil: Image.Image, img_selfie_pil: Image.Image, tolerance: float = 0.6):
+    """Compara rostros retornando mensaje, booleano y distancia."""
+    try:
+        # Extrae rostro de la cédula (recorte)
+        cedula_face = crop_largest_face(img_cedula_pil)
+        if cedula_face is None:
+            return "No se encontró un rostro en la cédula.", False, None
+
+        # Rostro de la selfie (usa el más grande)
+        selfie_face = crop_largest_face(img_selfie_pil)
+        if selfie_face is None:
+            return "No se encontró un rostro en la selfie.", False, None
+
+        # Encodings
+        enc_ced = face_recognition.face_encodings(np.array(cedula_face))
+        enc_self = face_recognition.face_encodings(np.array(selfie_face))
+
+        if not enc_ced:
+            return "No fue posible codificar el rostro de la cédula.", False, None
+        if not enc_self:
+            return "No fue posible codificar el rostro de la selfie.", False, None
+
+        # Distancia y match
+        distances = face_recognition.face_distance([enc_ced[0]], enc_self[0])
+        dist = float(distances[0])
+        matches = face_recognition.compare_faces([enc_ced[0]], enc_self[0], tolerance=tolerance)
+        ok = bool(matches[0])
+
+        if ok:
+            msg = f"✅ Verificación Exitosa: rostros coinciden (distancia {dist:.3f} ≤ tol {tolerance})."
+        else:
+            msg = f"❌ Verificación Fallida: no coinciden (distancia {dist:.3f} > tol {tolerance})."
+
+        return msg, ok, dist
+
+    except Exception as e:
+        return f"Ocurrió un error durante la comparación facial: {e}", False, None
+
+# ---------- INTERFAZ STREAMLIT ----------
+
+st.set_page_config(page_title="Verificación de Identidad IA", layout="wide")
+st.title("🚀 Verificación de Identidad con IA (Gemini)")
+
+# Estado
+if 'stage' not in st.session_state:
+    st.session_state.stage = 'inicio'
+if 'datos_capturados' not in st.session_state:
+    st.session_state.datos_capturados = []
+
+if 'anverso_buffer' not in st.session_state: st.session_state.anverso_buffer = None
+if 'selfie_buffer' not in st.session_state: st.session_state.selfie_buffer = None
+if 'cedula_corregida' not in st.session_state: st.session_state.cedula_corregida = None
+if 'datos_cedula' not in st.session_state: st.session_state.datos_cedula = {}
+
+def limpiar_y_empezar_de_nuevo():
+    st.session_state.stage = 'inicio'
+    st.session_state.anverso_buffer = None
+    st.session_state.selfie_buffer = None
+    st.session_state.cedula_corregida = None
+    st.session_state.datos_cedula = {}
+
+# --- PESTAÑAS DE ENTRADA ---
+st.info("Paso 1: Proporciona la imagen de la cédula.")
+tab1, tab2 = st.tabs(["📸 Tomar Foto", "⬆️ Subir Foto"])
+
+if st.session_state.stage == 'inicio':
+    with tab1:
+        anverso_cam = st.camera_input("Toma una foto del **Anverso**", key="cam_anverso")
+        if anverso_cam:
+            st.session_state.anverso_buffer = anverso_cam
+            st.session_state.stage = 'procesar_cedula'
+            st.rerun()
+    with tab2:
+        anverso_up = st.file_uploader("Sube una foto del **Anverso**", type=['jpg', 'jpeg', 'png'], key="up_anverso")
+        if anverso_up:
+            st.session_state.anverso_buffer = anverso_up
+            st.session_state.stage = 'procesar_cedula'
+            st.rerun()
+
+# --- PROCESAR CÉDULA ---
+if st.session_state.stage == 'procesar_cedula':
+    st.info("Procesando cédula...")
+    img_anverso_pil = Image.open(st.session_state.anverso_buffer)
+    img_anverso_pil = fix_orientation(img_anverso_pil)
+    st.session_state.cedula_corregida = corregir_perspectiva(img_anverso_pil)
+
+    if GEMINI_CONFIGURADO:
+        with st.spinner('La IA está analizando la cédula...'):
+            st.session_state.datos_cedula = extraer_datos_con_gemini([st.session_state.cedula_corregida])
     else:
-        st.warning("No se pudo reconocer ningún texto en el audio. Por favor, intenta de nuevo.")
+        st.session_state.datos_cedula = {"es_cedula_colombiana": None, "Nota": "Gemini no configurado"}
 
-if prompt_texto:
-    prompt_para_procesar = prompt_texto
+    st.session_state.stage = 'mostrar_resultados_cedula'
+    st.rerun()
 
-if prompt_para_procesar:
-    procesar_pregunta(prompt_para_procesar)
+# --- RESULTADOS + SELFIE ---
+if st.session_state.stage == 'mostrar_resultados_cedula':
+    datos = st.session_state.get('datos_cedula', {})
+    st.subheader("Paso 1: Datos extraídos de la cédula")
+
+    # Mostrar imagen corregida
+    st.image(st.session_state.cedula_corregida, caption="Cédula (corregida)", use_container_width=True)
+
+    # Mostrar JSON si está disponible
+    if datos:
+        st.json(datos)
+
+    # Validación para continuar
+    puede_continuar = (
+        not GEMINI_CONFIGURADO or
+        (isinstance(datos, dict) and datos.get("es_cedula_colombiana") is not False)
+    )
+
+    if puede_continuar:
+        st.info("Paso 2: Verificación facial - compara tu rostro con la foto de la cédula.")
+        selfie_cam = st.camera_input("Toma una selfie para la comparación", key="cam_selfie")
+        if selfie_cam:
+            st.session_state.selfie_buffer = selfie_cam
+            st.session_state.stage = 'procesar_selfie'
+            st.rerun()
+    else:
+        st.error("EL DOCUMENTO NO PARECE SER UNA CÉDULA DE CIUDADANÍA DE COLOMBIA.")
+        st.button("Empezar de Nuevo", on_click=limpiar_y_empezar_de_nuevo)
+
+# --- PROCESAR SELFIE / COMPARACIÓN ---
+if st.session_state.stage == 'procesar_selfie':
+    st.subheader("Paso 2: Verificación facial - resultados")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.image(st.session_state.cedula_corregida, caption="Cédula", use_container_width=True)
+    with col2:
+        st.image(st.session_state.selfie_buffer, caption="Selfie", use_container_width=True)
+
+    selfie_pil = fix_orientation(Image.open(st.session_state.selfie_buffer))
+
+    with st.spinner("Comparando rostros..."):
+        mensaje, exito, distancia = comparar_rostros(
+            st.session_state.cedula_corregida,
+            selfie_pil,
+            tolerance=0.6
+        )
+
+    if exito:
+        st.success(mensaje)
+        st.balloons()
+        if st.button("Confirmar y Guardar Registro"):
+            registro_final = dict(st.session_state.datos_cedula) if isinstance(st.session_state.datos_cedula, dict) else {}
+            registro_final["verificacion_facial"] = "Exitosa"
+            if distancia is not None:
+                registro_final["distancia_rostros"] = round(distancia, 4)
+            st.session_state.datos_capturados.append(registro_final)
+            st.success("¡Registro guardado!")
+            limpiar_y_empezar_de_nuevo()
+            st.rerun()
+    else:
+        st.error(mensaje)
+
+    st.button("Intentar de Nuevo", on_click=limpiar_y_empezar_de_nuevo)
+
+# --- LISTADO REGISTROS / DESCARGA ---
+if st.session_state.datos_capturados:
+    st.subheader("Registros Verificados")
+    df = pd.DataFrame(st.session_state.datos_capturados)
+    st.dataframe(df, use_container_width=True)
+
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Datos')
+    excel_data = output.getvalue()
+
+    st.download_button(
+        label="📥 Descargar todo como Excel",
+        data=excel_data,
+        file_name=ARCHIVO_EXCEL,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
