@@ -57,6 +57,7 @@ def get_llms():
     with st.spinner("🧠 Inicializando la red de agentes IANA..."):
         try:
             api_key = st.secrets["google_api_key"]
+            # Importante: sin el prefijo "models/"
             common = dict(temperature=0.1, google_api_key=api_key)
             llm_sql        = ChatGoogleGenerativeAI(model="gemini-1.5-pro", **common)
             llm_analista   = ChatGoogleGenerativeAI(model="gemini-1.5-pro", **common)
@@ -438,21 +439,32 @@ voice_text = speech_to_text(
     key="stt_browser"
 )
 
-# Opción 2 (fallback): graba WAV en memoria y transcribe con SpeechRecognition
-if not voice_text:
+# Opción 2 (fallback): graba audio en memoria y transcribe con SpeechRecognition
+audio = None
+try:
+    # En versiones nuevas de streamlit-mic-recorder existe 'format'
     audio = mic_recorder(
         start_prompt="🎙️ Grabar (fallback)",
         stop_prompt="🛑 Detener",
         use_container_width=True,
         just_once=True,
-        format="wav",   # produce WAV compatible con SR
-        rate=16000,
+        format="wav",           # si tu versión no soporta 'format', el except reintenta sin él
         key="mic_fallback"
     )
-    if audio and isinstance(audio, dict) and audio.get("bytes"):
-        text_from_bytes = transcribir_audio_bytes(audio["bytes"], language=lang)
-        if text_from_bytes:
-            voice_text = text_from_bytes
+except TypeError:
+    # En versiones antiguas no existen 'format' ni 'rate'
+    audio = mic_recorder(
+        start_prompt="🎙️ Grabar (fallback)",
+        stop_prompt="🛑 Detener",
+        use_container_width=True,
+        just_once=True,
+        key="mic_fallback"
+    )
+
+if not voice_text and audio and isinstance(audio, dict) and audio.get("bytes"):
+    text_from_bytes = transcribir_audio_bytes(audio["bytes"], language=lang)
+    if text_from_bytes:
+        voice_text = text_from_bytes
 
 # Si hay texto de voz, lo mostramos editable
 if voice_text:
