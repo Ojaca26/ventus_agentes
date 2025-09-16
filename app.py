@@ -14,7 +14,8 @@ from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain.chains import create_sql_query_chain
 
-# Speech-to-text en memoria (sin guardar archivos)
+# Micrófono en vivo (frontend) + fallback SR
+from streamlit_mic_recorder import speech_to_text, mic_recorder
 import speech_recognition as sr
 
 # ============================================
@@ -56,7 +57,6 @@ def get_llms():
     with st.spinner("🧠 Inicializando la red de agentes IANA..."):
         try:
             api_key = st.secrets["google_api_key"]
-            # Importante: sin el prefijo "models/"
             common = dict(temperature=0.1, google_api_key=api_key)
             llm_sql        = ChatGoogleGenerativeAI(model="gemini-1.5-pro", **common)
             llm_analista   = ChatGoogleGenerativeAI(model="gemini-1.5-pro", **common)
@@ -84,47 +84,24 @@ def get_sql_agent(_llm, _db):
 agente_sql = get_sql_agent(llm_sql, db)
 
 # ============================================
-# 1.b) Speech Recognition (NO guarda archivos)
+# 1.b) Reconocedor (fallback local)
 # ============================================
 
 @st.cache_resource
 def get_recognizer():
-    # Un único recognizer reutilizable
     r = sr.Recognizer()
-    # Opcionalmente, baja el umbral de energía si tus audios son suaves:
     r.energy_threshold = 300
     r.dynamic_energy_threshold = True
     return r
 
-def transcribir_audio_en_memoria(archivo_audio) -> Optional[str]:
-    """
-    Recibe un archivo subido por Streamlit (UploadedFile),
-    lo convierte a flujo de bytes en memoria y devuelve la transcripción.
-    ✅ No se escribe a disco ningún .mp3/.wav.
-    """
-    if archivo_audio is None:
-        return None
-
-    r = get_recognizer()
-    idioma = st.secrets.get("stt_language", "es-419")  # 'es-ES', 'es-MX', 'es-AR', etc.
-
-    st.info("🎧 Transcribiendo audio (sin guardar archivos)...")
+def transcribir_audio_bytes(data_bytes: bytes, language: str) -> Optional[str]:
+    """Transcribe bytes WAV/AIFF/FLAC en memoria (sin escribir a disco)."""
     try:
-        data = archivo_audio.getvalue()  # bytes en memoria
-        # SpeechRecognition soporta WAV/AIFF/FLAC nativos.
-        # Para MP3/M4A usa pydub + ffmpeg transparéntemente.
-        with sr.AudioFile(io.BytesIO(data)) as source:
+        r = get_recognizer()
+        with sr.AudioFile(io.BytesIO(data_bytes)) as source:
             audio = r.record(source)
-
-        # Servicio gratuito de Google Web Speech (tiene límites)
-        texto = r.recognize_google(audio, language=idioma)
-        if not texto.strip():
-            st.warning("No se pudo extraer texto del audio.")
-            return None
-
-        st.success("✅ Transcripción completada.")
-        return texto.strip()
-
+        texto = r.recognize_google(audio, language=language)
+        return texto.strip() if texto else None
     except sr.UnknownValueError:
         st.warning("No pude entender el audio.")
         return None
@@ -425,7 +402,7 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
 
 # ============================================
-# 5) Interfaz de Chat de Streamlit
+# 5) Interfaz: Micrófono en vivo + Chat
 # ============================================
 
 if "messages" not in st.session_state:
@@ -447,23 +424,42 @@ for message in st.session_state.messages:
         elif isinstance(content, str):
             st.markdown(content)
 
-# --- Entrada por audio (opcional, sin guardar en disco) ---
-st.markdown("### 🎙️ Hablar (opcional)")
-audio_file = st.file_uploader(
-    "Adjunta un audio con tu pregunta (wav, aiff, flac, mp3, m4a). No se guardará ningún archivo.",
-    type=["wav", "aiff", "flac", "mp3", "m4a"],
-    accept_multiple_files=False
+st.markdown("### 🎤 Habla con IANA (micro abierto)")
+
+lang = st.secrets.get("stt_language", "es-ES")  # ej: es-419, es-ES, es-MX
+
+# Opción 1: STT del navegador (auto-stop por silencio, sin subir ni guardar)
+voice_text = speech_to_text(
+    language=lang,
+    start_prompt="🎙️ Hablar",
+    stop_prompt="🛑 Listo",
+    use_container_width=True,
+    just_once=True,
+    key="stt_browser"
 )
 
-texto_desde_audio = None
-if audio_file is not None:
-    texto_desde_audio = transcribir_audio_en_memoria(audio_file)
-    if texto_desde_audio:
-        st.text_area("Transcripción detectada (puedes editarla antes de enviar):",
-                     value=texto_desde_audio, height=120, key="transcripcion_editable")
+# Opción 2 (fallback): graba WAV en memoria y transcribe con SpeechRecognition
+if not voice_text:
+    audio = mic_recorder(
+        start_prompt="🎙️ Grabar (fallback)",
+        stop_prompt="🛑 Detener",
+        use_container_width=True,
+        just_once=True,
+        format="wav",   # produce WAV compatible con SR
+        rate=16000,
+        key="mic_fallback"
+    )
+    if audio and isinstance(audio, dict) and audio.get("bytes"):
+        text_from_bytes = transcribir_audio_bytes(audio["bytes"], language=lang)
+        if text_from_bytes:
+            voice_text = text_from_bytes
 
-# --- Unificar entrada (audio o texto) ---
-prompt_text = st.session_state.get("transcripcion_editable") if texto_desde_audio else st.chat_input("Pregunta por costos, proveedores, familia...")
+# Si hay texto de voz, lo mostramos editable
+if voice_text:
+    st.text_area("Transcripción (puedes editar antes de enviar):", value=voice_text, height=100, key="transcripcion_editable")
+
+# Unificar entrada (voz o texto)
+prompt_text = st.session_state.get("transcripcion_editable") if st.session_state.get("transcripcion_editable") else st.chat_input("Pregunta por costos, proveedores, familia...")
 
 if prompt_text:
     if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador]):
