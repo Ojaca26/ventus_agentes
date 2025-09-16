@@ -1,20 +1,9 @@
-# Contenido EXACTO para tu archivo requirements.txt (con versiones alineadas)
-
-# --- Framework Principal ---
-streamlit==1.38.0
-pandas==2.2.2
-
-# --- Conexión a Base de Datos ---
-SQLAlchemy==2.0.31
-PyMySQL==1.1.1
-
-# --- Inteligencia Artificial y LangChain ---
-langchain==0.2.6
-langchain-community==0.2.6
-langchain-google-genai==1.0.6
-google-generativeai==0.5.4 # <<< ESTA ES LA LÍNEA CORREGIDA
-
-# --- Funcionalidad de Voz a Texto ---
-st-audiorec==0.1.5
-google-cloud-speech==2.26.1
-streamlit-webrtc==0.47.3
+streamlit
+opencv-python-headless
+pillow
+numpy
+pandas
+google-generativeai
+face_recognition
+dlib
+openpyxl
