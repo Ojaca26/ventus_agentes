@@ -36,7 +36,7 @@ with col2:
 
 @st.cache_resource
 def get_database_connection():
-    with st.spinner("🔌 Conectando a la base de datos de Ventus..."):
+    with st.spinner("🛰️ Conectando a la base de datos de Ventus..."):
         try:
             creds = st.secrets["db_credentials"]
             db_user = creds["user"]
@@ -54,7 +54,7 @@ def get_database_connection():
 
 @st.cache_resource
 def get_llms():
-    with st.spinner("🧠 Inicializando la red de agentes IANA..."):
+    with st.spinner("🤝 Inicializando la red de agentes IANA..."):
         try:
             api_key = st.secrets["google_api_key"]
             # Importante: sin el prefijo "models/"
@@ -267,21 +267,28 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
 Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO y riguroso.
 ---
 <<< REGLAS CRÍTICAS DE PRECISIÓN >>>
-1. **NO ALUCINAR**: NUNCA inventes números, totales, porcentajes o nombres que no estén en 'Datos'.
+1. **NO ALUCINAR**: NUNCA inventes números, totales, porcentajes o nombres de productos/categorías que no estén EXPRESAMENTE en la tabla de 'Datos'. Tu respuesta debe ser 100% verificable con los datos proporcionados.
 2. **DATOS INCOMPLETOS**: Reporta los vacíos (p.ej., "sin datos para Marzo") sin inventar valores.
-3. **VERIFICAR CÁLCULOS**: Revisa sumas/conteos/promedios con los datos.
-4. **CITAR DATOS**: Cada afirmación debe inferirse de 'Datos'.
+3. **VERIFICAR CÁLCULOS**: Antes de escribir un número, revisa el cálculo (sumas/conteos/promedios) con los datos.
+4. **CITAR DATOS**: Basa CADA afirmación que hagas en los datos visibles en la tabla. No hagas suposiciones.
 ---
 Pregunta Original: {pregunta_usuario}
 {hist_text}
-Datos (usa SÓLO estos):
+Datos para tu análisis (usa SÓLO estos):
 {preview}
 ---
 FORMATO OBLIGATORIO:
-📌 Resumen Ejecutivo:
-- (Hallazgos principales basados ESTRICTAMENTE en los datos.)
-🔍 Números de referencia:
-- (Cifras clave calculadas DIRECTAMENTE de los datos.)
+📌 Análisis Ejecutivo de datos:
+Cuando recibas una tabla de resultados (facturación, ventas, métricas, etc.), realiza el siguiente análisis:
+1. Calcular totales y porcentajes clave (participación de facturas grandes, distribución por días, % acumulado).
+2. Detectar concentración (si pocos registros explican gran parte del total).
+3. Identificar patrones temporales (días o periodos con concentración inusual).
+4. Analizar dispersión (ticket promedio, comparación entre valores grandes vs pequeños).
+
+Entregar el resultado en 3 bloques:
+📌 Resumen Ejecutivo: hallazgos principales con números.
+🔍 Números de referencia: totales, promedios, ratios comparativos.
+⚠ Importante: No describas lo obvio de la tabla. Sé muy breve, directo y diciente, con frases cortas en bullets que un gerente pueda leer en 1 minuto.
 """
     with st.spinner("💡 Generando análisis avanzado..."):
         analisis = llm_analista.invoke(prompt_analisis).content
@@ -292,7 +299,7 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str):
     st.info("💬 Activando modo de conversación...")
     prompt_personalidad = f"""
 Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.
-Si el usuario hace un comentario casual, responde brevemente y redirígelo a tus capacidades.
+Si el usuario hace un comentario casual, responde amablemente de forma natural, muy humana y redirígelo a tus capacidades.
 {hist_text}
 Pregunta: "{pregunta_usuario}"
 """
@@ -351,10 +358,15 @@ Evaluación:
 
 def clasificar_intencion(pregunta: str) -> str:
     prompt_orq = f"""
-Clasifica la intención en UNA SOLA PALABRA:
-1) analista: si pide interpretación / resumen / comparación / por qué / tendencias / insights.
-2) consulta: si pide datos crudos (listas, conteos, totales) y NO hay palabras clave de analista.
-3) conversacional: saludos o general.
+Clasifica la intención del usuario en UNA SOLA PALABRA. Presta especial atención a los verbos de acción y palabras clave.
+1. `analista`: Si la pregunta pide explícitamente una interpretación, resumen, comparación o explicación.
+    PALABRAS CLAVE PRIORITARIAS: analiza, compara, resume, explica, por qué, tendencia, insights, dame un análisis, haz un resumen.
+    Si una de estas palabras clave está presente, la intención SIEMPRE es `analista`.
+2. `consulta`: Si la pregunta pide datos crudos (listas, conteos, totales) y NO contiene una palabra clave prioritaria de `analista`.
+    Ejemplos: 'cuántos proveedores hay', 'lista todos los productos', 'muéstrame el total', 'y ahora por mes'.
+3. `conversacional`: Si es un saludo o una pregunta general no relacionada con datos.
+    Ejemplos: 'hola', 'gracias', 'qué puedes hacer'.
+    
 Pregunta: "{pregunta}"
 Clasificación:
 """
@@ -425,7 +437,7 @@ for message in st.session_state.messages:
         elif isinstance(content, str):
             st.markdown(content)
 
-st.markdown("### 🎤 Habla con IANA (micro abierto)")
+st.markdown("### 🎤 Habla con IANA")
 
 lang = st.secrets.get("stt_language", "es-ES")  # ej: es-419, es-ES, es-MX
 
@@ -433,7 +445,7 @@ lang = st.secrets.get("stt_language", "es-ES")  # ej: es-419, es-ES, es-MX
 voice_text = speech_to_text(
     language=lang,
     start_prompt="🎙️ Hablar",
-    stop_prompt="🛑 Listo",
+    stop_prompt="🛑 Detener",
     use_container_width=True,
     just_once=True,
     key="stt_browser"
@@ -444,7 +456,7 @@ audio = None
 try:
     # En versiones nuevas de streamlit-mic-recorder existe 'format'
     audio = mic_recorder(
-        start_prompt="🎙️ Grabar (fallback)",
+        start_prompt="🎙️ Grabar",
         stop_prompt="🛑 Detener",
         use_container_width=True,
         just_once=True,
@@ -454,7 +466,7 @@ try:
 except TypeError:
     # En versiones antiguas no existen 'format' ni 'rate'
     audio = mic_recorder(
-        start_prompt="🎙️ Grabar (fallback)",
+        start_prompt="🎙️ Grabar",
         stop_prompt="🛑 Detener",
         use_container_width=True,
         just_once=True,
@@ -498,3 +510,4 @@ if prompt_text:
             elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
                 st.toast("Hubo un error en la consulta ❌", icon="❌")
+
