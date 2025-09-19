@@ -18,7 +18,7 @@ from langchain.chains import create_sql_query_chain
 from streamlit_mic_recorder import speech_to_text, mic_recorder
 import speech_recognition as sr
 
-# <<< NUEVOS IMPORTS para el Agente de Correo >>>
+# Agente de Correo
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -43,7 +43,6 @@ with col2:
 
 @st.cache_resource
 def get_database_connection():
-    # ... (código sin cambios)
     with st.spinner("🛰️ Conectando a la base de datos de Ventus..."):
         try:
             creds = st.secrets["db_credentials"]
@@ -58,7 +57,6 @@ def get_database_connection():
 
 @st.cache_resource
 def get_llms():
-    # ... (código sin cambios)
     with st.spinner("🤝 Inicializando la red de agentes IANA..."):
         try:
             api_key = st.secrets["google_api_key"]
@@ -78,7 +76,6 @@ llm_sql, llm_analista, llm_orq, llm_validador = get_llms()
 
 @st.cache_resource
 def get_sql_agent(_llm, _db):
-    # ... (código sin cambios)
     if not _llm or not _db: return None
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
         toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
@@ -89,19 +86,17 @@ def get_sql_agent(_llm, _db):
 agente_sql = get_sql_agent(llm_sql, db)
 
 # ============================================
-# 1.b) Reconocedor (fallback local) (SIN CAMBIOS)
+# 1.b) Reconocedor de Voz (fallback local)
 # ============================================
 
 @st.cache_resource
 def get_recognizer():
-    # ... (código sin cambios)
     r = sr.Recognizer()
     r.energy_threshold = 300
     r.dynamic_energy_threshold = True
     return r
 
 def transcribir_audio_bytes(data_bytes: bytes, language: str) -> Optional[str]:
-    # ... (código sin cambios)
     try:
         r = get_recognizer()
         with sr.AudioFile(io.BytesIO(data_bytes)) as source:
@@ -112,48 +107,70 @@ def transcribir_audio_bytes(data_bytes: bytes, language: str) -> Optional[str]:
         return None
 
 # ============================================
-# <<< NUEVO >>> Agente de Correo
+# 2) Agente de Correo (Lógica Mejorada)
 # ============================================
 
-def extraer_detalles_correo(pregunta_usuario: str, df: pd.DataFrame) -> dict:
-    """Usa un LLM para extraer destinatario, asunto y cuerpo del prompt del usuario."""
+def extraer_detalles_correo(pregunta_usuario: str) -> dict:
     st.info("🧠 El agente de correo está interpretando tu solicitud...")
     
-    default_recipient = st.secrets.get("email_credentials", {}).get("default_recipient", "")
+    # Cargar la "agenda de contactos" desde los secretos
+    contactos = dict(st.secrets.get("named_recipients", {}))
+    default_recipient_name = st.secrets.get("email_credentials", {}).get("default_recipient", "")
     
     prompt = f"""
-    Dada la pregunta del usuario, extrae la información para enviar un correo. El output DEBE SER un JSON válido.
-    
-    Pregunta: "{pregunta_usuario}"
-    
-    1.  `recipient`: Busca una dirección de correo. Si no la encuentras, usa "{default_recipient}".
-    2.  `subject`: Crea un asunto corto y descriptivo.
+    Tu tarea es analizar la pregunta de un usuario y extraer los detalles para enviar un correo. Tu output DEBE SER un JSON válido.
+
+    Agenda de Contactos Disponibles: {', '.join(contactos.keys())}
+
+    Pregunta del usuario: "{pregunta_usuario}"
+
+    Instrucciones para extraer:
+    1.  `recipient_name`: Busca un nombre de la "Agenda de Contactos" en la pregunta. Si encuentras un nombre (ej: "Oscar"), pon ese nombre aquí. Si encuentras una dirección de correo explícita (ej: "test@test.com"), pon la dirección completa aquí. Si no encuentras ni nombre ni correo, usa "default".
+    2.  `subject`: Crea un asunto corto y descriptivo basado en la pregunta.
     3.  `body`: Crea un cuerpo de texto breve y profesional para el correo.
-    
+
+    Ejemplo:
+    Pregunta: "envía el reporte a Oscar por favor"
     JSON Output:
+    {{
+        "recipient_name": "Oscar",
+        "subject": "Reporte de Datos Solicitado",
+        "body": "Hola, como solicitaste, aquí tienes el reporte con los datos."
+    }}
+    
+    JSON Output para la pregunta actual:
     """
     
     try:
         response = llm_analista.invoke(prompt).content
-        # Limpiar la respuesta para que sea un JSON válido
         json_response = response.strip().replace("```json", "").replace("```", "").strip()
         details = json.loads(json_response)
+        
+        recipient_identifier = details.get("recipient_name", "default")
+        
+        # Resolver el identificador a un correo real
+        if "@" in recipient_identifier:
+            final_recipient = recipient_identifier  # Ya es un correo
+        elif recipient_identifier in contactos:
+            final_recipient = contactos[recipient_identifier] # Buscar en la agenda
+        else:
+            final_recipient = default_recipient_name # Usar el por defecto
+
         return {
-            "recipient": details.get("recipient", default_recipient),
+            "recipient": final_recipient,
             "subject": details.get("subject", "Reporte de Datos - IANA"),
             "body": details.get("body", "Adjunto encontrarás los datos solicitados.")
         }
-    except Exception:
-        st.warning("No pude interpretar los detalles del correo, usaré los valores por defecto.")
+    except Exception as e:
+        st.warning(f"No pude interpretar los detalles del correo (error: {e}), usaré los valores por defecto.")
         return {
-            "recipient": default_recipient,
+            "recipient": default_recipient_name,
             "subject": "Reporte de Datos - IANA",
             "body": "Adjunto encontrarás los datos solicitados."
         }
 
 
 def enviar_correo_agente(recipient: str, subject: str, body: str, df: Optional[pd.DataFrame] = None):
-    """Construye y envía un correo con un DataFrame como adjunto CSV."""
     with st.spinner(f"📧 Enviando correo a {recipient}..."):
         try:
             creds = st.secrets["email_credentials"]
@@ -164,13 +181,11 @@ def enviar_correo_agente(recipient: str, subject: str, body: str, df: Optional[p
             msg['From'] = sender_email
             msg['To'] = recipient
             msg['Subject'] = subject
-            
             msg.attach(MIMEText(body, 'plain'))
             
             if df is not None and not df.empty:
                 csv_buffer = io.StringIO()
                 df.to_csv(csv_buffer, index=False)
-                
                 attachment = MIMEApplication(csv_buffer.getvalue(), _subtype='csv')
                 attachment.add_header('Content-Disposition', 'attachment', filename="datos_iana.csv")
                 msg.attach(attachment)
@@ -186,18 +201,15 @@ def enviar_correo_agente(recipient: str, subject: str, body: str, df: Optional[p
             st.error(f"❌ No se pudo enviar el correo. Error: {e}")
             return {"tipo": "error", "texto": f"Lo siento, no pude enviar el correo. Detalle del error: {e}"}
 
-
 # ============================================
-# 2) Funciones Auxiliares (SIN CAMBIOS)
+# 3) Funciones Auxiliares y Agentes (SIN CAMBIOS)
 # ============================================
+# (Todas las funciones desde _coerce_numeric_series hasta responder_conversacion se mantienen igual)
 def _coerce_numeric_series(s: pd.Series) -> pd.Series:
-    # ... (código sin cambios)
     s2 = s.astype(str).str.replace(r'[\u00A0\s]', '', regex=True).str.replace(',', '', regex=False).str.replace('$', '', regex=False).str.replace('%', '', regex=False)
     try: return pd.to_numeric(s2)
     except Exception: return s
-
 def get_history_text(chat_history: list, n_turns=3) -> str:
-    # ... (código sin cambios)
     if not chat_history or len(chat_history) <= 1: return ""
     history_text = []
     relevant_history = chat_history[-(n_turns * 2 + 1) : -1]
@@ -210,9 +222,7 @@ def get_history_text(chat_history: list, n_turns=3) -> str:
             history_text.append(f"{role}: {text_content}")
     if not history_text: return ""
     return "\n--- Contexto de Conversación Anterior ---\n" + "\n".join(history_text) + "\n--- Fin del Contexto ---\n"
-
 def markdown_table_to_df(texto: str) -> pd.DataFrame:
-    # ... (código sin cambios)
     lineas = [l.rstrip() for l in texto.splitlines() if l.strip().startswith('|')]
     if not lineas: return pd.DataFrame()
     lineas = [l for l in lineas if not re.match(r'^\|\s*-{2,}', l)]
@@ -223,15 +233,11 @@ def markdown_table_to_df(texto: str) -> pd.DataFrame:
     df = pd.DataFrame(data, columns=header)
     for c in df.columns: df[c] = _coerce_numeric_series(df[c])
     return df
-
 def _df_preview(df: pd.DataFrame, n: int = 5) -> str:
-    # ... (código sin cambios)
     if df is None or df.empty: return ""
     try: return df.head(n).to_markdown(index=False)
     except Exception: return df.head(n).to_string(index=False)
-
 def interpretar_resultado_sql(res: dict) -> dict:
-    # ... (código sin cambios)
     df = res.get("df")
     if df is not None and not df.empty and res.get("texto") is None:
         if df.shape == (1, 1):
@@ -239,21 +245,12 @@ def interpretar_resultado_sql(res: dict) -> dict:
             res["texto"] = f"La respuesta para '{nombre_columna}' es: **{valor}**"
             st.info("💡 Resultado numérico interpretado para una respuesta directa.")
     return res
-
 def _asegurar_select_only(sql: str) -> str:
-    # ... (código sin cambios)
     sql_clean = sql.strip().rstrip(';')
-    if not re.match(r'(?is)^\s*select\b', sql_clean):
-        raise ValueError("Solo se permite ejecutar consultas SELECT.")
+    if not re.match(r'(?is)^\s*select\b', sql_clean): raise ValueError("Solo se permite ejecutar consultas SELECT.")
     sql_clean = re.sub(r'(?is)\blimit\s+\d+\s*$', '', sql_clean).strip()
     return sql_clean
-
-# ============================================
-# 3) Agentes (SIN CAMBIOS)
-# ============================================
-
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
-    # ... (código sin cambios)
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
     prompt_con_instrucciones = f"""Tu tarea es generar una consulta SQL limpia (SOLO SELECT) sobre la tabla `ventus` para responder la pregunta del usuario.\n---\n<<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>\n1. La columna `Producto` contiene descripciones largas.\n2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), usa `WHERE LOWER(Producto) LIKE '%palabra%'.\n3. Ejemplo: "cuántos transportes..." -> `WHERE LOWER(Producto) LIKE '%transporte%'`.\n4. No agregues LIMIT.\n---\n{hist_text}\nPregunta del usuario: "{pregunta_usuario}"\nDevuelve SOLO la consulta SQL (sin explicaciones)."""
     try:
@@ -269,9 +266,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     except Exception as e:
         st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Detalle: {e}")
         return {"sql": None, "df": None, "error": str(e)}
-
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
-    # ... (código sin cambios)
     st.info("🤔 Activando el agente SQL experto como plan B.")
     prompt_sql = (f"Tu tarea es responder la pregunta consultando la tabla 'ventus'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown (con encabezados). NUNCA resumas ni expliques. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
     try:
@@ -284,9 +279,7 @@ def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     except Exception as e:
         st.error(f"❌ El agente SQL experto también encontró un problema: {e}")
         return {"texto": f"[SQL_ERROR] {e}", "df": pd.DataFrame()}
-
 def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame | None, feedback: str = None):
-    # ... (código sin cambios)
     st.info("\n🧠 El analista experto está examinando los datos...")
     correccion_prompt = ""
     if feedback:
@@ -298,9 +291,7 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
         analisis = llm_analista.invoke(prompt_analisis).content
     st.success("💡 ¡Análisis completado!")
     return analisis
-
 def responder_conversacion(pregunta_usuario: str, hist_text: str):
-    # ... (código sin cambios)
     st.info("💬 Activando modo de conversación...")
     prompt_personalidad = f"""Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.\nSi el usuario hace un comentario casual, responde amablemente de forma natural, muy humana y redirígelo a tus capacidades.\n{hist_text}\nPregunta: "{pregunta_usuario}" """
     respuesta = llm_analista.invoke(prompt_personalidad).content
@@ -311,7 +302,6 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str):
 # ============================================
 
 def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
-    # ... (código sin cambios)
     MAX_INTENTOS = 2
     for intento in range(MAX_INTENTOS):
         st.info(f"🕵️‍♀️ Supervisor de Calidad: Verificando análisis (Intento {intento + 1})..."); contenido_respuesta = res_analisis.get("analisis", "") or ""
@@ -334,19 +324,16 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
     return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
 
 def clasificar_intencion(pregunta: str) -> str:
-    # <<< MODIFICADO para incluir la nueva intención 'correo' >>>
+    # <<< MODIFICADO para incluir 'correo' con ejemplos más claros >>>
     prompt_orq = f"""
 Clasifica la intención del usuario en UNA SOLA PALABRA. Presta especial atención a los verbos de acción y palabras clave.
 1. `analista`: Si la pregunta pide explícitamente una interpretación, resumen, comparación o explicación.
    PALABRAS CLAVE PRIORITARIAS: analiza, compara, resume, explica, por qué, tendencia, insights, dame un análisis, haz un resumen.
    Si una de estas palabras clave está presente, la intención SIEMPRE es `analista`.
-
 2. `consulta`: Si la pregunta pide datos crudos (listas, conteos, totales) y NO contiene una palabra clave prioritaria de `analista`.
    Ejemplos: 'cuántos proveedores hay', 'lista todos los productos', 'muéstrame el total', 'y ahora por mes'.
-
 3. `correo`: Si la pregunta pide explícitamente enviar un correo, email o reporte.
-   PALABRAS CLAVE: envía, mandar, correo, email, reporte a.
-
+   PALABRAS CLAVE: envía, mandar, correo, email, reporte a, envíale a.
 4. `conversacional`: Si es un saludo o una pregunta general no relacionada con datos.
    Ejemplos: 'hola', 'gracias', 'qué puedes hacer'.
 
@@ -361,7 +348,6 @@ Clasificación:
         return "conversacional"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
-    # ... (código sin cambios)
     if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
         for msg in reversed(st.session_state.get('messages', [])):
             if msg.get('role') == 'assistant':
@@ -375,7 +361,6 @@ def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
     return ejecutar_sql_en_lenguaje_natural(pregunta_usuario, hist_text)
 
 def orquestador(pregunta_usuario: str, chat_history: list):
-    # <<< MODIFICADO para manejar la nueva intención 'correo' >>>
     with st.expander("⚙️ Ver Proceso de IANA", expanded=False):
         hist_text = get_history_text(chat_history)
         clasificacion = clasificar_intencion(pregunta_usuario)
@@ -384,7 +369,6 @@ def orquestador(pregunta_usuario: str, chat_history: list):
         if clasificacion == "conversacional":
             return responder_conversacion(pregunta_usuario, hist_text)
         
-        # <<< NUEVO >>> Flujo para el agente de correo
         if clasificacion == "correo":
             df_para_enviar = None
             for msg in reversed(st.session_state.get('messages', [])):
@@ -398,7 +382,7 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             if df_para_enviar is None:
                 st.warning("No encontré una tabla en la conversación reciente para enviar. El correo irá sin datos adjuntos.")
 
-            detalles = extraer_detalles_correo(pregunta_usuario, df_para_enviar)
+            detalles = extraer_detalles_correo(pregunta_usuario)
             return enviar_correo_agente(
                 recipient=detalles["recipient"],
                 subject=detalles["subject"],
@@ -406,7 +390,6 @@ def orquestador(pregunta_usuario: str, chat_history: list):
                 df=df_para_enviar
             )
 
-        # Flujos existentes
         res_datos = obtener_datos_sql(pregunta_usuario, hist_text)
         if res_datos.get("df") is None or res_datos["df"].empty:
             return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
@@ -421,15 +404,13 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
 
 # ============================================
-# 5) Interfaz: Micrófono en vivo + Chat (SIN CAMBIOS)
+# 5) Interfaz: Micrófono en vivo + Chat
 # ============================================
 
 if "messages" not in st.session_state:
-    # ... (código sin cambios)
     st.session_state.messages = [{"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Ventus. ¿Qué te gustaría saber?"}}]
 
 for message in st.session_state.messages:
-    # ... (código sin cambios)
     with st.chat_message(message["role"]):
         content = message.get("content", {});
         if isinstance(content, dict):
@@ -438,28 +419,20 @@ for message in st.session_state.messages:
             if content.get("analisis"): st.markdown(content["analisis"])
         elif isinstance(content, str): st.markdown(content)
 
-st.markdown("### 🎤 Habla con IANA")
+st.markdown("### 🎤 Habla con IANA o escribe tu pregunta")
 lang = st.secrets.get("stt_language", "es-CO")
 
-text = speech_to_text(language=lang, start_prompt="🎙️ Hablar", stop_prompt="🛑 Detener", use_container_width=True, just_once=True, key="stt")
+# Unificar el procesamiento de la pregunta
+def procesar_pregunta(prompt):
+    if prompt:
+        if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador]):
+            st.error("La aplicación no está completamente inicializada. Revisa los errores de conexión o de API key.")
+            return
 
-if text:
-    st.text_area("Transcripción:", value=text, key="voice_transcript")
-
-prompt_text = st.chat_input("... o escribe tu pregunta aquí")
-final_prompt = prompt_text if prompt_text else st.session_state.get("voice_transcript")
-
-if final_prompt:
-    # Limpiar el transcript para evitar re-envíos
-    if "voice_transcript" in st.session_state: st.session_state.voice_transcript = ""
-
-    if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador]):
-        st.error("La aplicación no está completamente inicializada. Revisa los errores de conexión o de API key.")
-    else:
-        st.session_state.messages.append({"role": "user", "content": {"texto": final_prompt}})
-        with st.chat_message("user"): st.markdown(final_prompt)
+        st.session_state.messages.append({"role": "user", "content": {"texto": prompt}})
+        with st.chat_message("user"): st.markdown(prompt)
         with st.chat_message("assistant"):
-            res = orquestador(final_prompt, st.session_state.messages)
+            res = orquestador(prompt, st.session_state.messages)
             st.session_state.messages.append({"role": "assistant", "content": res})
             if res and res.get("tipo") != "error":
                 if res.get("texto"): st.markdown(res["texto"])
@@ -470,4 +443,24 @@ if final_prompt:
             elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
                 st.toast("Hubo un error ❌", icon="❌")
+
+# Contenedor para los inputs
+input_container = st.container()
+with input_container:
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        voice_text = speech_to_text(language=lang, start_prompt="🎙️ Hablar", stop_prompt="🛑 Detener", use_container_width=True, just_once=True, key="stt")
+    with col2:
+        prompt_text = st.chat_input("... o escribe tu pregunta aquí")
+
+# Determinar qué prompt usar
+prompt_a_procesar = None
+if voice_text:
+    prompt_a_procesar = voice_text
+elif prompt_text:
+    prompt_a_procesar = prompt_text
+
+# Procesar el prompt si existe
+if prompt_a_procesar:
+    procesar_pregunta(prompt_a_procesar)
     
