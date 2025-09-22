@@ -300,7 +300,6 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str):
 # ============================================
 # 4) Orquestador y Validación
 # ============================================
-
 def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
     MAX_INTENTOS = 2
     for intento in range(MAX_INTENTOS):
