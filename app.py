@@ -48,7 +48,7 @@ def get_database_connection():
             creds = st.secrets["db_credentials"]
             uri = f"mysql+pymysql://{creds['user']}:{creds['password']}@{creds['host']}/{creds['database']}"
             engine_args = {"pool_recycle": 3600, "pool_pre_ping": True}
-            db = SQLDatabase.from_uri(uri, include_tables=["ventus"], engine_args=engine_args)
+            db = SQLDatabase.from_uri(uri, include_tables=["ventus_ori"], engine_args=engine_args)
             st.success("✅ Conexión a la base de datos establecida.")
             return db
         except Exception as e:
@@ -463,3 +463,4 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
