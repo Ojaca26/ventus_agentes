@@ -13,12 +13,12 @@ from langchain.chains import create_sql_query_chain
 # ============================================
 # 0) Configuración de la Página y Título
 # ============================================
-st.set_page_config(page_title="IANA para Ventus", page_icon="logo_ventus.png", layout="wide") 
+st.set_page_config(page_title="IANA para Ventus", page_icon="logo_.png", layout="wide")
 
-col1, col2 = st.columns([1, 4]) 
+col1, col2 = st.columns([1, 4])
 
 with col1:
-    st.image("logo_.png", width=120) 
+    st.image("logo_.png", width=120)
 
 with col2:
     st.title("IANA: Tu Asistente IA para Análisis de Datos")
@@ -38,7 +38,7 @@ def get_database_connection():
             db_name = st.secrets["db_credentials"]["database"]
             uri = f"mysql+pymysql://{db_user}:{db_pass}@{db_host}/{db_name}"
             engine_args = {"pool_recycle": 3600, "pool_pre_ping": True}
-            db = SQLDatabase.from_uri(uri, include_tables=["ventus_pruebas"], engine_args=engine_args) 
+            db = SQLDatabase.from_uri(uri, include_tables=["ventus_pruebas"], engine_args=engine_args)
             st.success("✅ Conexión a la base de datos establecida.")
             return db
         except Exception as e:
@@ -53,7 +53,7 @@ def get_llms():
             llm_sql = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
             llm_analista = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.1, google_api_key=api_key)
             llm_orq = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key)
-            llm_validador = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key) 
+            llm_validador = ChatGoogleGenerativeAI(model="models/gemini-1.5-pro", temperature=0.0, google_api_key=api_key)
             st.success("✅ Agentes de IANA listos.")
             return llm_sql, llm_analista, llm_orq, llm_validador
         except Exception as e:
@@ -84,7 +84,7 @@ def get_history_text(chat_history: list, n_turns=3) -> str:
     for msg in relevant_history:
         content = msg.get("content", {})
         text_content = ""
-        if isinstance(content, dict): text_content = content.get("texto", "") 
+        if isinstance(content, dict): text_content = content.get("texto", "")
         elif isinstance(content, str): text_content = content
         if text_content:
             role = "Usuario" if msg["role"] == "user" else "IANA"
@@ -126,8 +126,30 @@ def interpretar_resultado_sql(res: dict) -> dict:
 # ============================================
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
+
+    # =============================================================================
+    # NUEVA SECCIÓN: CONTEXTO DE CÁLCULOS PARA EL AGENTE
+    # Aquí le "enseñamos" al agente las fórmulas de negocio.
+    # Puedes añadir todas las que necesites.
+    # =============================================================================
+    contexto_calculos = """
+    ---
+    <<< DEFINICIONES DE CÁLCULOS Y LÓGICA DE NEGOCIO >>>
+    1.  **Monto del IVA en COP**: Si el usuario pregunta por el monto del IVA, este se calcula como la diferencia entre el total y el subtotal: `Total_COP - Subtotal_COP`. La tabla también tiene una columna `IVA_COP` que debería ser lo mismo.
+    2.  **Porcentaje de IVA**: Para calcular la proporción o el porcentaje que representa el IVA, usa la fórmula: `((Total_COP - Subtotal_COP) / Subtotal_COP) * 100`.
+    3.  **Precio Unitario en COP**: Si el usuario pregunta por el costo o precio por unidad, calcula `Total_COP / Cantidad`. Asegúrate de no dividir por cero.
+    4.  **Precio Unitario en USD**: Para el precio por unidad en dólares, calcula `Total_USD / Cantidad`.
+
+    <<< EJEMPLO DE USO >>>
+    - Pregunta del usuario: "cuál es el porcentaje de iva promedio para el proveedor 'ACME'?"
+    - SQL Esperado: SELECT AVG(((Total_COP - Subtotal_COP) / Subtotal_COP) * 100) FROM ventus_pruebas WHERE Proveedor LIKE '%ACME%';
+    ---
+    """
+
+    # <-- CAMBIO: Se añade el 'contexto_calculos' al prompt principal.
     prompt_con_instrucciones = f"""
-    Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario.
+    Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario, aplicando la lógica de negocio si es necesario.
+    {contexto_calculos}
     ---
     <<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>
     1. La columna `Producto` contiene descripciones largas.
@@ -154,8 +176,10 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Error: {e}")
         return {"sql": None, "df": None, "error": str(e)}
 
+
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
+    # <-- CAMBIO MENOR: Asegurarse que el plan B también apunte a la tabla correcta.
     prompt_sql = (f"Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus_pruebas'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown. NUNCA resumas. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda..."):
@@ -330,7 +354,7 @@ for message in st.session_state.messages:
             if "df" in content and content["df"] is not None and not content["df"].empty: st.dataframe(content["df"])
             if "analisis" in content and content["analisis"]: st.markdown(content["analisis"])
         elif isinstance(content, str):
-             st.markdown(content)
+                 st.markdown(content)
 
 if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
     if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador]):
@@ -353,4 +377,3 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                     st.markdown(res["analisis"])
             elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
-
