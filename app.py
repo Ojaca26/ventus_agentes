@@ -18,11 +18,11 @@ st.set_page_config(page_title="IANA para Ventus", page_icon="logo_ventus.png", l
 col1, col2 = st.columns([1, 4]) 
 
 with col1:
-    st.image("logo_ventus.png", width=120) 
+    st.image("logo_.png", width=120) 
 
 with col2:
     st.title("IANA: Tu Asistente IA para Análisis de Datos")
-    st.markdown("Soy la red de agentes IA de **VENTUS**. Hazme una pregunta sobre los datos del proyecto IGUANA.")
+    st.markdown("Soy la red de agentes IA de ****. Hazme una pregunta sobre los datos del proyecto IGUANA.")
 
 # ============================================
 # 1) Conexión a la Base de Datos y LLMs
@@ -30,7 +30,7 @@ with col2:
 
 @st.cache_resource
 def get_database_connection():
-    with st.spinner("🔌 Conectando a la base de datos de Ventus..."):
+    with st.spinner("🔌 Conectando a la base de datos de Ventus_pruebas..."):
         try:
             db_user = st.secrets["db_credentials"]["user"]
             db_pass = st.secrets["db_credentials"]["password"]
@@ -38,7 +38,7 @@ def get_database_connection():
             db_name = st.secrets["db_credentials"]["database"]
             uri = f"mysql+pymysql://{db_user}:{db_pass}@{db_host}/{db_name}"
             engine_args = {"pool_recycle": 3600, "pool_pre_ping": True}
-            db = SQLDatabase.from_uri(uri, include_tables=["ventus"], engine_args=engine_args) 
+            db = SQLDatabase.from_uri(uri, include_tables=["ventus_pruebas"], engine_args=engine_args) 
             st.success("✅ Conexión a la base de datos establecida.")
             return db
         except Exception as e:
@@ -156,7 +156,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
-    prompt_sql = (f"Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown. NUNCA resumas. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
+    prompt_sql = (f"Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus_pruebas'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown. NUNCA resumas. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda..."):
             res = agente_sql.invoke(prompt_sql)
@@ -353,3 +353,4 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                     st.markdown(res["analisis"])
             elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
+
