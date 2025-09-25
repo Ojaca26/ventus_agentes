@@ -13,12 +13,12 @@ from langchain.chains import create_sql_query_chain
 # ============================================
 # 0) Configuración de la Página y Título
 # ============================================
-st.set_page_config(page_title="IANA para Ventus", page_icon="logo_.png", layout="wide")
+st.set_page_config(page_title="IANA para Ventus", page_icon="logo_ventus.png", layout="wide")
 
 col1, col2 = st.columns([1, 4])
 
 with col1:
-    st.image("logo_.png", width=120)
+    st.image("logo_ventus.png", width=120)
 
 with col2:
     st.title("IANA: Tu Asistente IA para Análisis de Datos")
@@ -377,3 +377,4 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                     st.markdown(res["analisis"])
             elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
+
