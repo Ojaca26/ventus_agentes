@@ -4,7 +4,10 @@ import streamlit as st
 import pandas as pd
 import re
 from sqlalchemy import text
-from langchain_google_genai import ChatGoogleGenerativeAI
+# ============================================
+# CAMBIO 1: Importar el LLM de OpenAI en lugar del de Google
+# ============================================
+from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
 from langchain.agents import create_sql_agent
 from langchain.agents.agent_toolkits import SQLDatabaseToolkit
@@ -49,19 +52,31 @@ def get_database_connection():
 def get_llms():
     with st.spinner("🧠 Inicializando la red de agentes IANA..."):
         try:
-            api_key = st.secrets["google_api_key"]
+            # ============================================
+            # CAMBIO 2: Usar la clave de API de OpenAI
+            # Asegúrate de que en tus secretos de Streamlit exista [openai_api_key]
+            # ============================================
+            api_key = st.secrets["openai_api_key"]
             
-            model_name = "gemini-1.5-pro"
+            # ============================================
+            # CAMBIO 3: Especificar un modelo de OpenAI (ej. "gpt-4o" o "gpt-3.5-turbo")
+            # ============================================
+            model_name = "gpt-4o"
             
-            llm_sql = ChatGoogleGenerativeAI(model=model_name, temperature=0.1, google_api_key=api_key)
-            llm_analista = ChatGoogleGenerativeAI(model=model_name, temperature=0.1, google_api_key=api_key)
-            llm_orq = ChatGoogleGenerativeAI(model=model_name, temperature=0.0, google_api_key=api_key)
-            llm_validador = ChatGoogleGenerativeAI(model=model_name, temperature=0.0, google_api_key=api_key)
+            # ============================================
+            # CAMBIO 4: Instanciar ChatOpenAI en lugar de ChatGoogleGenerativeAI
+            # El argumento ahora es `openai_api_key`
+            # ============================================
+            llm_sql = ChatOpenAI(model=model_name, temperature=0.1, openai_api_key=api_key)
+            llm_analista = ChatOpenAI(model=model_name, temperature=0.1, openai_api_key=api_key)
+            llm_orq = ChatOpenAI(model=model_name, temperature=0.0, openai_api_key=api_key)
+            llm_validador = ChatOpenAI(model=model_name, temperature=0.0, openai_api_key=api_key)
             
             st.success("✅ Agentes de IANA listos.")
             return llm_sql, llm_analista, llm_orq, llm_validador
         except Exception as e:
-            st.error(f"Error al inicializar los LLMs. Asegúrate de que tu API key es correcta. Error: {e}")
+            # CAMBIO 5: Actualizar el mensaje de error
+            st.error(f"Error al inicializar los LLMs. Asegúrate de que tu OpenAI API key es correcta. Error: {e}")
             return None, None, None, None
 
 db = get_database_connection()
@@ -79,7 +94,7 @@ def get_sql_agent(_llm, _db):
 agente_sql = get_sql_agent(llm_sql, db)
 
 # ============================================
-# Funciones Auxiliares
+# Funciones Auxiliares (Sin cambios aquí)
 # ============================================
 def get_history_text(chat_history: list, n_turns=3) -> str:
     if not chat_history or len(chat_history) <= 1: return ""
@@ -126,16 +141,11 @@ def interpretar_resultado_sql(res: dict) -> dict:
     return res
 
 # ============================================
-# Funciones de Agentes
+# Funciones de Agentes (Sin cambios aquí)
 # ============================================
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
 
-    # =============================================================================
-    # NUEVA SECCIÓN: CONTEXTO DE CÁLCULOS PARA EL AGENTE
-    # Aquí le "enseñamos" al agente las fórmulas de negocio.
-    # Puedes añadir todas las que necesites.
-    # =============================================================================
     contexto_calculos = """
     ---
     <<< DEFINICIONES DE CÁLCULOS Y LÓGICA DE NEGOCIO >>>
@@ -150,7 +160,6 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     ---
     """
 
-    # <-- CAMBIO: Se añade el 'contexto_calculos' al prompt principal.
     prompt_con_instrucciones = f"""
     Tu tarea es generar una consulta SQL limpia para responder la pregunta del usuario, aplicando la lógica de negocio si es necesario.
     {contexto_calculos}
@@ -183,12 +192,13 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
-    # <-- CAMBIO MENOR: Asegurarse que el plan B también apunte a la tabla correcta.
     prompt_sql = (f"Tu tarea es responder la pregunta del usuario consultando la tabla 'ventus_bi'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown. NUNCA resumas. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda..."):
+            # Nota: el método .invoke en agentes de Langchain devuelve un diccionario
             res = agente_sql.invoke(prompt_sql)
-            texto = res["output"] if isinstance(res, dict) and "output" in res else str(res)
+            # El contenido de la respuesta suele estar en la clave 'output'
+            texto = res.get("output", str(res))
         st.info("📝 Intentando convertir la respuesta en una tabla de datos...")
         df_md = markdown_table_to_df(texto)
         return {"texto": texto, "df": df_md}
@@ -220,6 +230,7 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     📌 Resumen Ejecutivo:\n- (Hallazgos principales basados ESTRICTAMENTE en los datos.)
     🔍 Números de referencia:\n- (Cifras clave calculadas DIRECTAMENTE de los datos.)"""
     with st.spinner("💡 Generando análisis avanzado..."):
+        # Nota: El método .invoke devuelve un objeto de mensaje, accedemos al contenido con .content
         analisis = llm_analista.invoke(prompt_analisis).content
     st.success("💡 ¡Análisis completado!")
     return analisis
@@ -234,7 +245,7 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str):
     return {"texto": respuesta, "df": None, "analisis": None}
 
 # ============================================
-# Lógica Principal y Orquestador
+# Lógica Principal y Orquestador (Sin cambios aquí)
 # ============================================
 def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
     MAX_INTENTOS = 2
@@ -344,7 +355,7 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
 
 # ============================================
-# 3) Interfaz de Chat de Streamlit
+# 3) Interfaz de Chat de Streamlit (Sin cambios aquí)
 # ============================================
 
 if "messages" not in st.session_state:
@@ -358,7 +369,7 @@ for message in st.session_state.messages:
             if "df" in content and content["df"] is not None and not content["df"].empty: st.dataframe(content["df"])
             if "analisis" in content and content["analisis"]: st.markdown(content["analisis"])
         elif isinstance(content, str):
-                 st.markdown(content)
+            st.markdown(content)
 
 if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
     if not all([db, llm_sql, llm_analista, llm_orq, agente_sql, llm_validador]):
@@ -381,6 +392,3 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                     st.markdown(res["analisis"])
             elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
-
-
-
