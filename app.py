@@ -264,9 +264,34 @@ def _asegurar_select_only(sql: str) -> str:
     if not re.match(r'(?is)^\s*select\b', sql_clean): raise ValueError("Solo se permite ejecutar consultas SELECT.")
     sql_clean = re.sub(r'(?is)\blimit\s+\d+\s*$', '', sql_clean).strip()
     return sql_clean
+
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
-    prompt_con_instrucciones = f"""Tu tarea es generar una consulta SQL limpia (SOLO SELECT) sobre la tabla `ventus_bi` para responder la pregunta del usuario.\n---\n<<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>\n1. La columna `Nombre_Producto` contiene descripciones largas.\n2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), usa `WHERE LOWER(Nombre_Producto) LIKE '%palabra%'.\n3. Ejemplo: "cuántos transportes..." -> `WHERE LOWER(Nombre_Producto) LIKE '%transporte%'`.\n4. No agregues LIMIT.\n---\n{hist_text}\nPregunta del usuario: "{pregunta_usuario}"\nDevuelve SOLO la consulta SQL (sin explicaciones)."""
+    
+    prompt_con_instrucciones = f"""
+    Tu tarea es generar una consulta SQL limpia (SOLO SELECT) sobre la tabla `ventus_bi` para responder la pregunta del usuario.
+
+    ---
+    <<< NUEVA REGLA: SIEMPRE MOSTRAR COP Y USD >>>
+    1. Muchas columnas financieras tienen una versión para COP y otra para USD, a menudo terminando en `_COP` y `_USD` (ej: `Total_COP`, `Total_USD`, `Valor_Consumido_COP`, `Valor_Consumido_USD`).
+    2. Si la pregunta del usuario es sobre un valor monetario (costo, valor, total, facturación, precio, consumido), DEBES seleccionar AMBAS columnas en la consulta, la de COP y la de USD, si existen.
+    3. Ejemplo: Si la pregunta es "¿cuál es el total facturado?", la consulta debería ser algo como `SELECT SUM(Total_Facturado_COP), SUM(Total_Facturado_USD) FROM ventus_bi;`. Aplica este patrón a otras métricas.
+    ---
+    <<< REGLA CRÍTICA PARA FILTRAR POR FECHA >>>
+    1. Tu tabla tiene una columna de fecha llamada `Fecha_Facturacion`.
+    2. Si el usuario especifica un año (ej: "del 2025", "en 2024"), SIEMPRE debes añadir una condición `WHERE YEAR(Fecha_Facturacion) = [año]` a la consulta.
+    3. Ejemplo: "dame las ventas de 2025" -> DEBE INCLUIR `WHERE YEAR(Fecha_Facturacion) = 2025`.
+    ---
+    <<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>
+    1. La columna `Nombre_Producto` contiene descripciones largas.
+    2. Si el usuario pregunta por un producto o servicio específico, usa `WHERE LOWER(Nombre_Producto) LIKE '%palabra%'.
+    ---
+    {hist_text}
+    Pregunta del usuario: "{pregunta_usuario}"
+
+    Devuelve SOLO la consulta SQL (sin explicaciones).
+    """
+    
     try:
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
@@ -280,6 +305,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     except Exception as e:
         st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Detalle: {e}")
         return {"sql": None, "df": None, "error": str(e)}
+
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
     prompt_sql = (f"Tu tarea es responder la pregunta consultando la tabla 'ventus'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown (con encabezados). NUNCA resumas ni expliques. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
@@ -537,6 +563,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
