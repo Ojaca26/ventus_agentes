@@ -491,11 +491,11 @@ def orquestador(pregunta_usuario: str, chat_history: list):
             # Primero, intentamos interpretar el resultado como siempre
             res_interpretado = interpretar_resultado_sql(res_datos)
     
-        # Luego, si no se generó texto (porque es una tabla), creamos la introducción
-        if res_interpretado.get("texto") is None and res_interpretado.get("df") is not None and not res_interpretado["df"].empty:
-            res_interpretado = generar_resumen_tabla(pregunta_usuario, res_interpretado)
+            # Luego, si no se generó texto (porque es una tabla), creamos la introducción
+            if res_interpretado.get("texto") is None and res_interpretado.get("df") is not None and not res_interpretado["df"].empty:
+                res_interpretado = generar_resumen_tabla(pregunta_usuario, res_interpretado)
     
-        return res_interpretado
+            return res_interpretado
 
         if clasificacion == "analista":
             st.info("🧠 Generando análisis inicial...")
@@ -563,6 +563,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
