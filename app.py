@@ -317,29 +317,44 @@ def generar_resumen_tabla(pregunta_usuario: str, res: dict) -> dict:
     if df is None or df.empty:
         return res
 
+    # --- INICIO DE LA MODIFICACIÓN DEL PROMPT ---
     prompt = f"""
-    Tu tarea es escribir una única frase introductoria y amable para una tabla de datos, basándote en la pregunta del usuario.
-    NO analices los datos de la tabla. NO resumas los números. Simplemente presenta la tabla.
+    Actúa como IANA, un analista de datos amable y servicial.
+    Tu tarea es escribir una breve y conversacional introducción para la tabla de datos que estás a punto de mostrar.
+    Basa tu respuesta en la pregunta del usuario para que se sienta como una continuación natural de la conversación.
+
+    IMPORTANTE: Varía tus respuestas. No uses siempre la misma frase. Suena natural y humana.
 
     Pregunta del usuario: "{pregunta_usuario}"
     
+    ---
+    Aquí tienes varios ejemplos de cómo responder:
+
     Ejemplo 1:
     Pregunta: "cuáles son los proveedores"
-    Respuesta: "Claro, aquí tienes la lista de proveedores:"
+    Respuesta: "¡Listo! Aquí tienes la lista de proveedores que encontré:"
 
-    Ejemplo 2 (como tu caso):
+    Ejemplo 2:
+    Pregunta: "y sus ventas?"
+    Respuesta: "He consultado las cifras de ventas. Te las muestro en la siguiente tabla:"
+
+    Ejemplo 3:
     Pregunta: "y en q % esta su consumo?"
-    Respuesta: "¡Por supuesto! A continuación se muestran los porcentajes de consumo que solicitaste:"
+    Respuesta: "Perfecto, aquí está el desglose de los porcentajes de consumo que pediste:"
 
-    Genera la introducción para la pregunta del usuario:
+    Ejemplo 4:
+    Pregunta: "dame el total por mes"
+    Respuesta: "Claro que sí. He preparado la tabla con los totales por mes:"
+    ---
+
+    Ahora, genera la introducción para la pregunta del usuario actual:
     """
+    # --- FIN DE LA MODIFICACIÓN DEL PROMPT ---
     try:
-        # Usamos el LLM para crear una introducción natural
         introduccion = llm_analista.invoke(prompt).content
         res["texto"] = introduccion
     except Exception as e:
         st.warning(f"No se pudo generar el resumen introductorio. Error: {e}")
-        # Si falla, usamos un texto genérico
         res["texto"] = "Aquí están los datos que solicitaste:"
     return res
 
@@ -521,5 +536,6 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
