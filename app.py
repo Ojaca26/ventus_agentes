@@ -322,7 +322,8 @@ def generar_resumen_tabla(pregunta_usuario: str, res: dict) -> dict:
     Actúa como IANA, un analista de datos amable y servicial.
     Tu tarea es escribir una breve y conversacional introducción para la tabla de datos que estás a punto de mostrar.
     Basa tu respuesta en la pregunta del usuario para que se sienta como una continuación natural de la conversación.
-
+    Si la respuesta no le gustó al USUARIO, disculpate es posible que le entendiste mal.
+    
     IMPORTANTE: Varía tus respuestas. No uses siempre la misma frase. Suena natural y humana.
 
     Pregunta del usuario: "{pregunta_usuario}"
@@ -536,6 +537,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
