@@ -266,7 +266,7 @@ def _asegurar_select_only(sql: str) -> str:
     return sql_clean
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
-    prompt_con_instrucciones = f"""Tu tarea es generar una consulta SQL limpia (SOLO SELECT) sobre la tabla `ventus_bi` para responder la pregunta del usuario.\n---\n<<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>\n1. La columna `Producto` contiene descripciones largas.\n2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), usa `WHERE LOWER(Producto) LIKE '%palabra%'.\n3. Ejemplo: "cuántos transportes..." -> `WHERE LOWER(Producto) LIKE '%transporte%'`.\n4. No agregues LIMIT.\n---\n{hist_text}\nPregunta del usuario: "{pregunta_usuario}"\nDevuelve SOLO la consulta SQL (sin explicaciones)."""
+    prompt_con_instrucciones = f"""Tu tarea es generar una consulta SQL limpia (SOLO SELECT) sobre la tabla `ventus_bi` para responder la pregunta del usuario.\n---\n<<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>\n1. La columna `Nombre_Producto` contiene descripciones largas.\n2. Si el usuario pregunta por un producto o servicio específico (ej: 'transporte', 'guantes'), usa `WHERE LOWER(Nombre_Producto) LIKE '%palabra%'.\n3. Ejemplo: "cuántos transportes..." -> `WHERE LOWER(Nombre_Producto) LIKE '%transporte%'`.\n4. No agregues LIMIT.\n---\n{hist_text}\nPregunta del usuario: "{pregunta_usuario}"\nDevuelve SOLO la consulta SQL (sin explicaciones)."""
     try:
         query_chain = create_sql_query_chain(llm_sql, db)
         sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
@@ -537,6 +537,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
