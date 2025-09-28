@@ -311,6 +311,38 @@ def responder_conversacion(pregunta_usuario: str, hist_text: str):
     respuesta = llm_analista.invoke(prompt_personalidad).content
     return {"texto": respuesta, "df": None, "analisis": None}
 
+def generar_resumen_tabla(pregunta_usuario: str, res: dict) -> dict:
+    st.info("✍️ Generando un resumen introductorio para la tabla...")
+    df = res.get("df")
+    if df is None or df.empty:
+        return res
+
+    prompt = f"""
+    Tu tarea es escribir una única frase introductoria y amable para una tabla de datos, basándote en la pregunta del usuario.
+    NO analices los datos de la tabla. NO resumas los números. Simplemente presenta la tabla.
+
+    Pregunta del usuario: "{pregunta_usuario}"
+    
+    Ejemplo 1:
+    Pregunta: "cuáles son los proveedores"
+    Respuesta: "Claro, aquí tienes la lista de proveedores:"
+
+    Ejemplo 2 (como tu caso):
+    Pregunta: "y en q % esta su consumo?"
+    Respuesta: "¡Por supuesto! A continuación se muestran los porcentajes de consumo que solicitaste:"
+
+    Genera la introducción para la pregunta del usuario:
+    """
+    try:
+        # Usamos el LLM para crear una introducción natural
+        introduccion = llm_analista.invoke(prompt).content
+        res["texto"] = introduccion
+    except Exception as e:
+        st.warning(f"No se pudo generar el resumen introductorio. Error: {e}")
+        # Si falla, usamos un texto genérico
+        res["texto"] = "Aquí están los datos que solicitaste:"
+    return res
+
 # ============================================
 # 4) Orquestador y Validación
 # ============================================
@@ -407,9 +439,21 @@ def orquestador(pregunta_usuario: str, chat_history: list):
         if res_datos.get("df") is None or res_datos["df"].empty:
             return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
 
+        #if clasificacion == "consulta":
+        #    st.success("✅ Consulta directa completada.")
+        #    return interpretar_resultado_sql(res_datos)
+
+
         if clasificacion == "consulta":
             st.success("✅ Consulta directa completada.")
-            return interpretar_resultado_sql(res_datos)
+            # Primero, intentamos interpretar el resultado como siempre
+            res_interpretado = interpretar_resultado_sql(res_datos)
+    
+        # Luego, si no se generó texto (porque es una tabla), creamos la introducción
+        if res_interpretado.get("texto") is None and res_interpretado.get("df") is not None and not res_interpretado["df"].empty:
+            res_interpretado = generar_resumen_tabla(pregunta_usuario, res_interpretado)
+    
+        return res_interpretado
 
         if clasificacion == "analista":
             st.info("🧠 Generando análisis inicial...")
@@ -477,4 +521,5 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
