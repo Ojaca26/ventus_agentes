@@ -25,7 +25,7 @@ with col1:
 
 with col2:
     st.title("IANA: Tu Asistente IA para Análisis de Datos")
-    st.markdown("Soy la red de agentes IA de ****. Hazme una pregunta sobre los datos del proyecto IGUANA.")
+    st.markdown("Soy la red de agentes IA de VENTUS. Hazme una pregunta sobre los datos del proyecto IGUANA.")
 
 # ============================================
 # 1) Conexión a la Base de Datos y LLMs
@@ -392,4 +392,5 @@ if prompt := st.chat_input("Pregunta por costos, proveedores, familia..."):
                     st.markdown(res["analisis"])
             elif res:
                 st.error(res.get("texto", "Ocurrió un error inesperado."))
+
 
