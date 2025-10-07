@@ -301,6 +301,27 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         with st.spinner("⏳ Ejecutando consulta..."):
             with db._engine.connect() as conn: df = pd.read_sql(text(sql_query_limpia), conn)
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
+
+        try:
+            if df is not None and not df.empty:
+                numeric_cols = df.select_dtypes(include=["number"]).columns
+                if len(numeric_cols) > 0:
+                    totals = df[numeric_cols].sum(numeric_only=True)
+                    total_row = {col: "Total" if col not in numeric_cols else totals[col] for col in df.columns}
+                    df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+
+                    # --- Estilo visual para la fila Total ---
+                    def highlight_total_row(row):
+                        if str(row.iloc[0]).lower() == "total":
+                            return ["font-weight: bold; background-color: #f0f0f0; border-top: 2px solid #999;"] * len(row)
+                        else:
+                            return [""] * len(row)
+
+                    styled_df = df.style.apply(highlight_total_row, axis=1)
+                    return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+        except Exception as e:
+            st.warning(f"No se pudo agregar la fila de totales: {e}")
+        
         return {"sql": sql_query_limpia, "df": df}
     except Exception as e:
         st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Detalle: {e}")
@@ -563,6 +584,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
