@@ -302,7 +302,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
             with db._engine.connect() as conn: df = pd.read_sql(text(sql_query_limpia), conn)
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
-       try:
+        try:
             if not df.empty:
                 # Extraer año de la consulta SQL (si existe)
                 year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
@@ -599,6 +599,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
