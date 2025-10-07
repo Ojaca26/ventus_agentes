@@ -303,25 +303,37 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
         try:
-            if df is not None and not df.empty:
-                numeric_cols = df.select_dtypes(include=["number"]).columns
-                if len(numeric_cols) > 0:
-                    totals = df[numeric_cols].sum(numeric_only=True)
-                    total_row = {col: "Total" if col not in numeric_cols else totals[col] for col in df.columns}
-                    df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+            if not df.empty:
+                # Extraer año de la consulta SQL (si existe)
+                year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
+                year_value = year_match.group(1) if year_match else None
 
-                    # --- Estilo visual para la fila Total ---
-                    def highlight_total_row(row):
-                        if str(row.iloc[0]).lower() == "total":
-                            return ["font-weight: bold; background-color: #f0f0f0; border-top: 2px solid #999;"] * len(row)
-                        else:
-                            return [""] * len(row)
+                # Agregar columna Año solo si se detecta
+                if year_value and "Año" not in df.columns:
+                    df.insert(0, "Año", year_value)
 
-                    styled_df = df.style.apply(highlight_total_row, axis=1)
-                    return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+                # Sumar solo columnas numéricas (ignorar Mes o Año)
+                value_cols = [c for c in df.select_dtypes("number").columns if not re.match(r"(?i)mes|año", c)]
+                if value_cols:
+                    total_row = {col: df[col].sum() if col in value_cols else "" for col in df.columns}
+                    total_row[df.columns[1]] = "Total"
+                    if year_value:
+                        total_row["Año"] = year_value
+                    df.loc[len(df)] = total_row
+
+                # Estilo visual para la fila Total
+                def highlight_total(row):
+                    return [
+                        "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
+                        if str(row.iloc[1]).lower() == "total" else ""
+                    ] * len(row)
+
+                styled_df = df.style.apply(highlight_total, axis=1)
+                return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+
         except Exception as e:
-            st.warning(f"No se pudo agregar la fila de totales: {e}")
-        
+            st.warning(f"No se pudo aplicar formato ni totales: {e}")
+            
         return {"sql": sql_query_limpia, "df": df}
     except Exception as e:
         st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Detalle: {e}")
@@ -584,6 +596,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
