@@ -302,7 +302,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
             with db._engine.connect() as conn: df = pd.read_sql(text(sql_query_limpia), conn)
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
-        try:
+       try:
             if not df.empty:
                 # Extraer año de la consulta SQL (si existe)
                 year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
@@ -312,20 +312,23 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
                 if year_value and "Año" not in df.columns:
                     df.insert(0, "Año", year_value)
 
-                # Sumar solo columnas numéricas (ignorar Mes o Año)
-                value_cols = [c for c in df.select_dtypes("number").columns if not re.match(r"(?i)mes|año", c)]
+                # 🔹 Detectar solo columnas numéricas que sí deben sumarse (evitar Mes, Año, Fecha...)
+                value_cols = [
+                    c for c in df.select_dtypes("number").columns
+                    if not re.search(r"(?i)\b(mes|año|dia|fecha)\b", c)
+                ]
+
+                # 🔹 Agregar fila Total si hay columnas de valor
                 if value_cols:
                     total_row = {col: df[col].sum() if col in value_cols else "" for col in df.columns}
-                    total_row[df.columns[1]] = "Total"
-                    if year_value:
-                        total_row["Año"] = year_value
+                    total_row[df.columns[0]] = "Total"  # siempre en la primera columna
                     df.loc[len(df)] = total_row
 
-                # Estilo visual para la fila Total
+                # 🎨 Estilo visual para la fila Total
                 def highlight_total(row):
                     return [
                         "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
-                        if str(row.iloc[1]).lower() == "total" else ""
+                        if str(row.iloc[0]).lower() == "total" else ""
                     ] * len(row)
 
                 styled_df = df.style.apply(highlight_total, axis=1)
@@ -596,6 +599,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
