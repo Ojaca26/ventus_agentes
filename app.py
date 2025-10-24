@@ -299,36 +299,48 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     try:
         chain = SQLDatabaseChain.from_llm(llm_sql, db, verbose=True)
         sql_query_bruta = chain.run(prompt_con_instrucciones)
-        m = re.search(r'(?is)(select\b.+)$', sql_query_bruta.strip()); sql_query_limpia = m.group(1).strip() if m else sql_query_bruta.strip()
-        sql_query_limpia = re.sub(r'(?is)^```sql|```$', '', sql_query_limpia).strip(); sql_query_limpia = _asegurar_select_only(sql_query_limpia)
+
+        # 🧹 LIMPIEZA EXTRA: quitar prefijos "sql" y ```sql
+        sql_query_limpia = (
+            sql_query_bruta.replace("```sql", "")
+            .replace("```", "")
+            .replace("sql\n", "")
+            .replace("\nsql", "")
+            .strip()
+        )
+
+        # Extraer el bloque real de la consulta
+        m = re.search(r'(?is)(select\b.+)$', sql_query_limpia.strip())
+        sql_query_limpia = m.group(1).strip() if m else sql_query_limpia.strip()
+
+        sql_query_limpia = _asegurar_select_only(sql_query_limpia)
         st.code(sql_query_limpia, language='sql')
+
+        # 🚀 Ejecutar la consulta SQL
         with st.spinner("⏳ Ejecutando consulta..."):
-            with db._engine.connect() as conn: df = pd.read_sql(text(sql_query_limpia), conn)
+            with db._engine.connect() as conn:
+                df = pd.read_sql(text(sql_query_limpia), conn)
+
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
+        # 🧮 Post-procesamiento igual al tuyo (totales y formato)
         try:
             if not df.empty:
-                # Extraer año de la consulta SQL (si existe)
                 year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
                 year_value = year_match.group(1) if year_match else None
-
-                # Agregar columna Año solo si se detecta
                 if year_value and "Año" not in df.columns:
                     df.insert(0, "Año", year_value)
 
-                # 🔹 Detectar solo columnas numéricas que sí deben sumarse (evitar Mes, Año, Fecha...)
                 value_cols = [
                     c for c in df.select_dtypes("number").columns
                     if not re.search(r"(?i)\b(mes|año|dia|fecha)\b", c)
                 ]
 
-                # 🔹 Agregar fila Total si hay columnas de valor
                 if value_cols:
                     total_row = {col: df[col].sum() if col in value_cols else "" for col in df.columns}
-                    total_row[df.columns[0]] = "Total"  # siempre en la primera columna
+                    total_row[df.columns[0]] = "Total"
                     df.loc[len(df)] = total_row
 
-                # 🎨 Estilo visual para la fila Total
                 def highlight_total(row):
                     return [
                         "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
@@ -340,11 +352,13 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
         except Exception as e:
             st.warning(f"No se pudo aplicar formato ni totales: {e}")
-            
+
         return {"sql": sql_query_limpia, "df": df}
+
     except Exception as e:
         st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Detalle: {e}")
         return {"sql": None, "df": None, "error": str(e)}
+
 
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
@@ -602,6 +616,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
