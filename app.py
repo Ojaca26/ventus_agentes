@@ -12,7 +12,8 @@ from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.agent_toolkits.sql.base import create_sql_agent
 from langchain_community.utilities import SQLDatabase
-from langchain_community.chains.sql_database.query import create_sql_query_chain  # ✅ Nuevo import
+from langchain_experimental.sql import SQLDatabaseChain
+
 
 from streamlit_mic_recorder import speech_to_text, mic_recorder
 import speech_recognition as sr
@@ -296,8 +297,8 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     """
     
     try:
-        query_chain = create_sql_query_chain(llm_sql, db)
-        sql_query_bruta = query_chain.invoke({"question": prompt_con_instrucciones})
+        chain = SQLDatabaseChain.from_llm(llm_sql, db, verbose=True)
+        sql_query_bruta = chain.run(prompt_con_instrucciones)
         m = re.search(r'(?is)(select\b.+)$', sql_query_bruta.strip()); sql_query_limpia = m.group(1).strip() if m else sql_query_bruta.strip()
         sql_query_limpia = re.sub(r'(?is)^```sql|```$', '', sql_query_limpia).strip(); sql_query_limpia = _asegurar_select_only(sql_query_limpia)
         st.code(sql_query_limpia, language='sql')
@@ -601,6 +602,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
