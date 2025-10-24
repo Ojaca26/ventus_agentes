@@ -12,6 +12,8 @@ from langchain_openai import ChatOpenAI
 from langchain.agents import AgentExecutor
 from langchain_community.agent_toolkits.sql.base import SQLDatabaseToolkit
 from langchain.agents.toolkits.sql.base import create_sql_agent
+from langchain_community.utilities import SQLDatabase
+
 
 from streamlit_mic_recorder import speech_to_text, mic_recorder
 import speech_recognition as sr
@@ -45,12 +47,16 @@ def get_database_connection():
         try:
             creds = st.secrets["db_credentials"]
             uri = f"mysql+pymysql://{creds['user']}:{creds['password']}@{creds['host']}/{creds['database']}"
-            engine_args = {"pool_recycle": 3600, "pool_pre_ping": True}
+            engine_args = {
+                "pool_recycle": 3600,
+                "pool_pre_ping": True,
+                "connect_args": {"connect_timeout": 10}  # ⏱️ límite de conexión 10 segundos
+            }
             db = SQLDatabase.from_uri(uri, include_tables=["ventus_bi"], engine_args=engine_args)
             st.success("✅ Conexión a la base de datos establecida.")
             return db
         except Exception as e:
-            st.error(f"Error al conectar a la base de datos: {e}")
+            st.error(f"❌ Error al conectar a la base de datos: {e}")
             return None
 
 @st.cache_resource
@@ -591,17 +597,4 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
-
-
-
-
-
-
-
-
-
-
-
-
-
 
