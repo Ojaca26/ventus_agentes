@@ -1,27 +1,16 @@
-
-streamlit>=1.37.0
-pandas>=2.0.0
-sqlalchemy>=2.0.30
-pymysql>=1.1.0
-langchain>=0.2.0
-langchain-community>=0.2.0
-
-langchain-openai
+# Framework principal
+streamlit==1.38.0
 streamlit-mic-recorder==0.0.8
-SpeechRecognition>=3.10.0
 
-# Framework para la app web
-streamlit>=1.37.0
+# Manipulación y conexión a datos
+pandas==2.2.2
+sqlalchemy==2.0.30
+pymysql==1.1.0
 
-# Manipulación de datos
-pandas>=2.0.0
+# Librerías LangChain (versiones estables)
+langchain==0.2.14
+langchain-community==0.2.11
+langchain-openai==0.1.22
 
-# Conexión a la base de datos SQL
-sqlalchemy>=2.0.30
-pymysql>=1.1.0
-
-# Librerías base de LangChain
-langchain>=0.2.0
-langchain-community>=0.2.0
-
-
+# Reconocimiento de voz
+SpeechRecognition==3.10.4
