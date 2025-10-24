@@ -12,5 +12,8 @@ langchain==0.2.14
 langchain-community==0.2.11
 langchain-openai==0.1.22
 
+
+
 # Reconocimiento de voz
 SpeechRecognition==3.10.4
+
