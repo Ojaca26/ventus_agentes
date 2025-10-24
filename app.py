@@ -100,8 +100,9 @@ def get_sql_agent(_llm, _db):
                 llm=_llm,
                 toolkit=toolkit,
                 verbose=True,
-                handle_parsing_errors=True,  # ✅ evita crash si el LLM explica en vez de responder
-                max_iterations=3             # 🧠 reintenta hasta 3 veces
+                handle_parsing_errors=True,
+                max_iterations=3,
+                early_stopping_method="generate"  # 🛡️ fuerza salida segura en errores
             )
 
             st.success("✅ Agente SQL configurado correctamente.")
@@ -332,16 +333,19 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         sql_query_bruta = chain.run(prompt_con_instrucciones)
         st.text_area("🧩 SQL generado por el modelo:", sql_query_bruta, height=100)
 
-        # 🧹 Limpieza robusta de formato SQL generado
+        # 🧹 Limpieza robusta del SQL generado
         sql_query_limpia = limpiar_sql(sql_query_bruta)
 
-        # Si aún no empieza con SELECT, intenta extraer el bloque válido
+        # ⚠️ Si aún no empieza con SELECT, intenta extraer la parte válida
         if not sql_query_limpia.lower().startswith("select"):
             m = re.search(r'(?is)(select\b.+)$', sql_query_limpia)
             if m:
                 sql_query_limpia = m.group(1).strip()
 
-        # Garantiza que solo haya un SELECT válido
+        # 🚨 Filtro extra: elimina líneas residuales como "sql SELECT ..."
+        sql_query_limpia = re.sub(r'(?i)^sql[\s:]+', '', sql_query_limpia)
+
+        # ✅ Asegura que solo sea un SELECT permitido
         sql_query_limpia = _asegurar_select_only(sql_query_limpia)
 
         # Mostrar resultado final
@@ -647,6 +651,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
