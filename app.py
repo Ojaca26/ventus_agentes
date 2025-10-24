@@ -87,10 +87,16 @@ llm_sql, llm_analista, llm_orq, llm_validador = get_llms()
 
 @st.cache_resource
 def get_sql_agent(_llm, _db):
-    if not _llm or not _db: return None
+    if not _llm or not _db:
+        return None
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
         toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
-        agent = create_sql_agent(llm=_llm, toolkit=toolkit, verbose=True)
+        agent = create_sql_agent(
+            llm=_llm,
+            toolkit=toolkit,
+            verbose=True,
+            handle_parsing_errors=True  # ✅ Evita crash si el LLM responde "I don't know"
+        )
         st.success("✅ Agente SQL configurado.")
         return agent
 
@@ -595,6 +601,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
