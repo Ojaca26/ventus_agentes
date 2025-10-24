@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 # LangChain + Gemini
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor
+from langchain.agents import initialize_agent
 from langchain_community.agent_toolkits.sql.base import SQLDatabaseToolkit
 from langchain.agents.toolkits.sql.base import create_sql_agent
 from langchain_community.utilities import SQLDatabase
@@ -597,4 +597,5 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
