@@ -443,18 +443,17 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
     return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
 
 def clasificar_intencion(pregunta: str) -> str:
-    # <<< MODIFICADO para incluir 'correo' con ejemplos más claros >>>
     prompt_orq = f"""
-Clasifica la intención del usuario en UNA SOLA PALABRA. Presta especial atención a los verbos de acción y palabras clave.
-1. `analista`: Si la pregunta pide explícitamente una interpretación, resumen, comparación o explicación.
-   PALABRAS CLAVE PRIORITARIAS: analiza, compara, resume, explica, por qué, tendencia, insights, dame un análisis, haz un resumen.
-   Si una de estas palabras clave está presente, la intención SIEMPRE es `analista`.
-2. `consulta`: Si la pregunta pide datos crudos (listas, conteos, totales) y NO contiene una palabra clave prioritaria de `analista`.
-   Ejemplos: 'cuántos proveedores hay', 'lista todos los productos', 'muéstrame el total', 'y ahora por mes'.
-3. `correo`: Si la pregunta pide explícitamente enviar un correo, email o reporte.
-   PALABRAS CLAVE: envía, mandar, correo, email, reporte a, envíale a.
-4. `conversacional`: Si es un saludo o una pregunta general no relacionada con datos.
-   Ejemplos: 'hola', 'gracias', 'qué puedes hacer'.
+Clasifica la intención del usuario en UNA SOLA PALABRA: `consulta`, `analista`, `correo` o `conversacional`.
+
+Reglas:
+1. `analista`: si el usuario pide interpretación, resumen, comparación o explicación.
+   PALABRAS CLAVE: analiza, compara, resume, explica, por qué, tendencia, insights, interpretación, conclusiones.
+2. `consulta`: si el usuario pide ver datos, cifras, totales, listados o información específica de una base de datos.
+   PALABRAS CLAVE: total, valor, ventas, facturación, consumo, costo, proveedores, productos, mes, año, lista, dime, dame, cuántos, muéstrame.
+   Si la pregunta contiene una fecha o número de año (por ejemplo, 2023, 2024, 2025), clasifícala como `consulta`.
+3. `correo`: si menciona enviar, mandar, correo, email o reporte.
+4. `conversacional`: si es un saludo, agradecimiento o comentario general (hola, gracias, quién eres, qué haces, cómo estás).
 
 Pregunta: "{pregunta}"
 Clasificación:
@@ -462,9 +461,9 @@ Clasificación:
     try:
         opciones = {"consulta", "analista", "conversacional", "correo"}
         r = llm_orq.invoke(prompt_orq).content.strip().lower().replace('"', '').replace("'", "")
-        return r if r in opciones else "conversacional"
+        return r if r in opciones else "consulta"  # 👈 Fallback seguro a 'consulta'
     except Exception:
-        return "conversacional"
+        return "consulta"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
     if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
@@ -595,6 +594,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
