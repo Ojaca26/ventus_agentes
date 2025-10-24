@@ -95,13 +95,15 @@ def get_sql_agent(_llm, _db):
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
         try:
             toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
+
             agent = create_sql_agent(
                 llm=_llm,
                 toolkit=toolkit,
                 verbose=True,
-                handle_parsing_errors=True,   # ✅ evita el crash
-                max_iterations=3               # 🧠 añade reintentos controlados
+                handle_parsing_errors=True,  # ✅ evita crash si el LLM explica en vez de responder
+                max_iterations=3             # 🧠 reintenta hasta 3 veces
             )
+
             st.success("✅ Agente SQL configurado correctamente.")
             return agent
         except Exception as e:
@@ -276,6 +278,28 @@ def _asegurar_select_only(sql: str) -> str:
     sql_clean = re.sub(r'(?is)\blimit\s+\d+\s*$', '', sql_clean).strip()
     return sql_clean
 
+
+def limpiar_sql(sql_texto: str) -> str:
+    """
+    Limpia texto generado por LLM para dejar solo la consulta SQL válida.
+    - Elimina prefijos como 'sql', 'sql:', o 'SQL\n'
+    - Elimina etiquetas ```sql``` o ````
+    - Recorta espacios
+    """
+    if not sql_texto:
+        return ""
+
+    # Quita prefijos 'sql' o 'sql:'
+    limpio = re.sub(r'(?im)^\s*sql[:\s-]*\n?', '', sql_texto)
+
+    # Quita bloques de markdown
+    limpio = re.sub(r'```sql|```', '', limpio, flags=re.I)
+
+    # Limpieza final
+    limpio = limpio.strip()
+    return limpio
+
+
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
     
@@ -306,19 +330,22 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     try:
         chain = SQLDatabaseChain.from_llm(llm_sql, db, verbose=True)
         sql_query_bruta = chain.run(prompt_con_instrucciones)
+        st.text_area("🧩 SQL generado por el modelo:", sql_query_bruta, height=100)
 
-        # 🧹 Limpieza extendida de formato
-        sql_query_limpia = sql_query_bruta
-        sql_query_limpia = re.sub(r'(?i)^sql[\s:\n]+', '', sql_query_limpia)  # elimina "sql", "SQL:" o similares al inicio
-        sql_query_limpia = re.sub(r'```sql|```', '', sql_query_limpia, flags=re.I)  # elimina marcas Markdown
-        sql_query_limpia = sql_query_limpia.strip()
+        # 🧹 Limpieza robusta de formato SQL generado
+        sql_query_limpia = limpiar_sql(sql_query_bruta)
 
-        # Extraer el bloque real de la consulta
-        m = re.search(r'(?is)(select\b.+)$', sql_query_limpia.strip())
-        sql_query_limpia = m.group(1).strip() if m else sql_query_limpia.strip()
+        # Si aún no empieza con SELECT, intenta extraer el bloque válido
+        if not sql_query_limpia.lower().startswith("select"):
+            m = re.search(r'(?is)(select\b.+)$', sql_query_limpia)
+            if m:
+                sql_query_limpia = m.group(1).strip()
 
+        # Garantiza que solo haya un SELECT válido
         sql_query_limpia = _asegurar_select_only(sql_query_limpia)
-        st.code(sql_query_limpia, language='sql')
+
+        # Mostrar resultado final
+        st.code(sql_query_limpia, language="sql")
 
         # 🚀 Ejecutar la consulta SQL
         with st.spinner("⏳ Ejecutando consulta..."):
@@ -620,6 +647,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
