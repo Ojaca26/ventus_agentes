@@ -7,11 +7,12 @@ import io
 from typing import Optional
 from sqlalchemy import text
 
-# LangChain + Gemini
+# LangChain + Gemini / OpenAI
+from langchain_openai import ChatOpenAI
 from langchain_community.agent_toolkits import SQLDatabaseToolkit
 from langchain_community.agent_toolkits.sql.base import create_sql_agent
-from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
+from langchain_community.chains.sql_database.query import create_sql_query_chain  # ✅ Nuevo import
 
 from streamlit_mic_recorder import speech_to_text, mic_recorder
 import speech_recognition as sr
@@ -594,6 +595,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
