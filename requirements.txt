@@ -5,6 +5,6 @@ pymysql>=1.1.0
 streamlit-mic-recorder==0.0.8
 SpeechRecognition>=3.10.0
 
+langchain>=0.3.0
+langchain-community>=0.3.0
 langchain-openai==0.1.22
-langchain>=0.2.0
-langchain-community>=0.2.0
