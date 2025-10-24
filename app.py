@@ -10,9 +10,14 @@ from sqlalchemy import text
 # LangChain + Gemini
 from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
-from langchain.agents import create_sql_agent
-from langchain.agents.agent_toolkits import SQLDatabaseToolkit
+#from langchain.agents import create_sql_agent
+#from langchain.agents.agent_toolkits import SQLDatabaseToolkit
 from langchain.chains import create_sql_query_chain
+
+from langchain.agents import AgentExecutor
+from langchain.agents.toolkits import create_sql_agent
+from langchain_community.agent_toolkits.sql.base import SQLDatabaseToolkit
+
 
 #from langchain_google_genai import ChatGoogleGenerativeAI
 #from langchain_community.utilities import SQLDatabase
@@ -93,7 +98,7 @@ def get_sql_agent(_llm, _db):
     if not _llm or not _db: return None
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
         toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
-        agent = create_sql_agent(llm=_llm, toolkit=toolkit, verbose=False, top_k=1000)
+        agent = create_sql_agent(llm=_llm, toolkit=toolkit, verbose=True)
         st.success("✅ Agente SQL configurado.")
         return agent
 
@@ -599,6 +604,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
