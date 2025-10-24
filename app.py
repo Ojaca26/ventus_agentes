@@ -86,20 +86,27 @@ def get_llms():
 db = get_database_connection()
 llm_sql, llm_analista, llm_orq, llm_validador = get_llms()
 
+
 @st.cache_resource
 def get_sql_agent(_llm, _db):
     if not _llm or not _db:
         return None
+
     with st.spinner("🛠️ Configurando agente SQL de IANA..."):
-        toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
-        agent = create_sql_agent(
-            llm=_llm,
-            toolkit=toolkit,
-            verbose=True,
-            handle_parsing_errors=True  # ✅ Evita crash si el LLM responde "I don't know"
-        )
-        st.success("✅ Agente SQL configurado.")
-        return agent
+        try:
+            toolkit = SQLDatabaseToolkit(db=_db, llm=_llm)
+            agent = create_sql_agent(
+                llm=_llm,
+                toolkit=toolkit,
+                verbose=True,
+                handle_parsing_errors=True,   # ✅ evita el crash
+                max_iterations=3               # 🧠 añade reintentos controlados
+            )
+            st.success("✅ Agente SQL configurado correctamente.")
+            return agent
+        except Exception as e:
+            st.error(f"❌ No se pudo inicializar el agente SQL. Detalle: {e}")
+            return None
 
 agente_sql = get_sql_agent(llm_sql, db)
 
@@ -300,14 +307,11 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         chain = SQLDatabaseChain.from_llm(llm_sql, db, verbose=True)
         sql_query_bruta = chain.run(prompt_con_instrucciones)
 
-        # 🧹 LIMPIEZA EXTRA: quitar prefijos "sql" y ```sql
-        sql_query_limpia = (
-            sql_query_bruta.replace("```sql", "")
-            .replace("```", "")
-            .replace("sql\n", "")
-            .replace("\nsql", "")
-            .strip()
-        )
+        # 🧹 Limpieza extendida de formato
+        sql_query_limpia = sql_query_bruta
+        sql_query_limpia = re.sub(r'(?i)^sql[\s:\n]+', '', sql_query_limpia)  # elimina "sql", "SQL:" o similares al inicio
+        sql_query_limpia = re.sub(r'```sql|```', '', sql_query_limpia, flags=re.I)  # elimina marcas Markdown
+        sql_query_limpia = sql_query_limpia.strip()
 
         # Extraer el bloque real de la consulta
         m = re.search(r'(?is)(select\b.+)$', sql_query_limpia.strip())
@@ -616,6 +620,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
