@@ -290,20 +290,20 @@ def limpiar_sql(sql_texto: str) -> str:
     if not sql_texto:
         return ""
 
-    # 🔥 Elimina líneas que empiecen con 'sql' o 'SQL' (con o sin ':', con o sin salto de línea)
-    limpio = re.sub(r'(?im)^\s*sql[:\s-]*\n?', '', sql_texto)
+    # 🔥 Elimina etiquetas markdown primero
+    limpio = re.sub(r'```sql|```', '', sql_texto, flags=re.I)
 
-    # 🔥 Elimina etiquetas markdown
-    limpio = re.sub(r'```sql|```', '', limpio, flags=re.I)
+    # 🔥 Elimina cualquier prefijo 'sql' seguido de espacio, ':' o salto de línea
+    # Usa '+' para capturar uno o más separadores (más robusto que \n?)
+    limpio = re.sub(r'(?im)^\s*sql[\s:]+', '', limpio)
 
-    # 🔥 Busca el primer SELECT si todavía hay texto extra
+    # 🔥 Busca el primer SELECT si todavía hay texto explicativo
     m = re.search(r'(?is)(select\b.+)$', limpio)
     if m:
         limpio = m.group(1)
 
     # Limpieza final
-    return limpio.strip()
-
+    return limpio.strip().rstrip(';')
 
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
@@ -331,14 +331,17 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
     Devuelve SOLO la consulta SQL (sin explicaciones).
     """
-    
+
     try:
-        chain = SQLDatabaseChain.from_llm(llm_sql, db, verbose=True)
-        sql_query_bruta = chain.run(prompt_con_instrucciones)
+        # ⬇️ --- ESTE ES EL CAMBIO PRINCIPAL --- ⬇️
+        # Llama al LLM directamente para OBTENER el SQL (sin ejecutarlo)
+        sql_query_bruta = llm_sql.invoke(prompt_con_instrucciones).content
+        # ⬆️ --- ESTE ES EL CAMBIO PRINCIPAL --- ⬆️
+
         st.text_area("🧩 SQL generado por el modelo:", sql_query_bruta, height=100)
 
         # 🧹 Limpieza robusta del SQL generado
-        sql_query_limpia = limpiar_sql(sql_query_bruta)
+        sql_query_limpia = limpiar_sql(sql_query_bruta) # Ahora esta función sí se ejecutará
 
         # ⚠️ Si aún no empieza con SELECT, intenta extraer la parte válida
         if not sql_query_limpia.lower().startswith("select"):
@@ -346,20 +349,20 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
             if m:
                 sql_query_limpia = m.group(1).strip()
 
-        # 🚨 Filtro extra: elimina líneas residuales como "sql SELECT ..."
-        sql_query_limpia = re.sub(r'(?i)^sql[\s:]+', '', sql_query_limpia)
+        # 🚨 (Opcional) Esta línea ya no es tan necesaria si 'limpiar_sql' es bueno
+        # sql_query_limpia = re.sub(r'(?i)^sql[\s:]+', '', sql_query_limpia)
 
         # ✅ Asegura que solo sea un SELECT permitido
         sql_query_limpia = _asegurar_select_only(sql_query_limpia)
 
         # Mostrar resultado final
         st.code(sql_query_limpia, language="sql")
-
-        # 🚀 Ejecutar la consulta SQL
+        
+        # 🚀 Ejecutar la consulta SQL (Ahora sí, con el SQL limpio)
         with st.spinner("⏳ Ejecutando consulta..."):
             with db._engine.connect() as conn:
                 df = pd.read_sql(text(sql_query_limpia), conn)
-
+    
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
         # 🧮 Post-procesamiento igual al tuyo (totales y formato)
@@ -655,6 +658,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
