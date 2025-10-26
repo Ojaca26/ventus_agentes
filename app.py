@@ -283,22 +283,26 @@ def _asegurar_select_only(sql: str) -> str:
 def limpiar_sql(sql_texto: str) -> str:
     """
     Limpia texto generado por LLM para dejar solo la consulta SQL válida.
-    - Elimina prefijos como 'sql', 'sql:', o 'SQL\n'
-    - Elimina etiquetas ```sql``` o ````
-    - Recorta espacios
+    - Elimina prefijos como 'sql', 'sql:', 'SQL\n'
+    - Elimina etiquetas ```sql``` o ``` ```
+    - Recorta espacios y saltos de línea.
     """
     if not sql_texto:
         return ""
 
-    # Quita prefijos 'sql' o 'sql:'
+    # 🔥 Elimina líneas que empiecen con 'sql' o 'SQL' (con o sin ':', con o sin salto de línea)
     limpio = re.sub(r'(?im)^\s*sql[:\s-]*\n?', '', sql_texto)
 
-    # Quita bloques de markdown
+    # 🔥 Elimina etiquetas markdown
     limpio = re.sub(r'```sql|```', '', limpio, flags=re.I)
 
+    # 🔥 Busca el primer SELECT si todavía hay texto extra
+    m = re.search(r'(?is)(select\b.+)$', limpio)
+    if m:
+        limpio = m.group(1)
+
     # Limpieza final
-    limpio = limpio.strip()
-    return limpio
+    return limpio.strip()
 
 
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
@@ -651,6 +655,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
