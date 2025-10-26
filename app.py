@@ -307,41 +307,53 @@ def limpiar_sql(sql_texto: str) -> str:
 
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
-    
+
+    # --- ⬇️ ESTA ES LA CORRECCIÓN NUEVA Y CRÍTICA ⬇️ ---
+    # (Obtener el esquema de la tabla)
+    try:
+        # Obtener la info solo de la tabla 'ventus_bi'
+        # Usamos .get_table_info() que está diseñado para esto
+        schema_info = db.get_table_info(table_names=["ventus_bi"])
+    except Exception as e:
+        st.error(f"Error crítico: No se pudo obtener el esquema de la tabla 'ventus_bi'. {e}")
+        schema_info = "Error al obtener esquema. Asume columnas estándar."
+    # --- ⬆️ FIN DE LA CORRECCIÓN ⬆️ ---
+
+    # --- ⬇️ ESTE PROMPT TAMBIÉN ESTÁ ACTUALIZADO ⬇️ ---
     prompt_con_instrucciones = f"""
-    Tu tarea es generar una consulta SQL limpia (SOLO SELECT) sobre la tabla `ventus_bi` para responder la pregunta del usuario.
+    Tu tarea es generar una consulta SQL limpia (SOLO SELECT) para responder la pregunta del usuario, basándote ESTRICTAMENTE en el siguiente esquema de tabla.
+
+    --- ESQUEMA DE LA TABLA 'ventus_bi' ---
+    {schema_info}
+    --- FIN DEL ESQUEMA ---
 
     ---
     <<< NUEVA REGLA: SIEMPRE MOSTRAR COP Y USD >>>
-    1. Muchas columnas financieras tienen una versión para COP y otra para USD, a menudo terminando en `_COP` y `_USD` (ej: `Total_COP`, `Total_USD`, `Valor_Consumido_COP`, `Valor_Consumido_USD`).
-    2. Si la pregunta del usuario es sobre un valor monetario (costo, valor, total, facturación, precio, consumido), DEBES seleccionar AMBAS columnas en la consulta, la de COP y la de USD, si existen.
-    3. Ejemplo: Si la pregunta es "¿cuál es el total facturado?", la consulta debería ser algo como `SELECT SUM(Total_Facturado_COP), SUM(Total_Facturado_USD) FROM ventus_bi;`. Aplica este patrón a otras métricas.
+    1. Revisa el esquema de arriba. Si hay columnas financieras con versiones `_COP` y `_USD` (o similar), úsalas.
+    2. Si la pregunta es sobre un valor monetario (costo, valor, total, facturación), DEBES seleccionar AMBAS columnas (COP y USD) si existen en el esquema.
+    3. **IMPORTANTE**: NO INVENTES columnas que no estén en el esquema. Si el usuario pregunta por "facturación" y en el esquema solo existe la columna `Monto_Factura`, usa `SUM(Monto_Factura)`. Si existen `Facturado_COP` y `Facturado_USD`, usa `SUM(Facturado_COP), SUM(Facturado_USD)`.
     ---
     <<< REGLA CRÍTICA PARA FILTRAR POR FECHA >>>
-    1. Tu tabla tiene una columna de fecha llamada `Fecha_Facturacion`.
-    2. Si el usuario especifica un año (ej: "del 2025", "en 2024"), SIEMPRE debes añadir una condición `WHERE YEAR(Fecha_Facturacion) = [año]` a la consulta.
-    3. Ejemplo: "dame las ventas de 2025" -> DEBE INCLUIR `WHERE YEAR(Fecha_Facturacion) = 2025`.
+    1. Si en el esquema ves una columna de fecha (ej: `Fecha_Facturacion`), úsala para filtrar.
+    2. Si el usuario especifica un año (ej: "del 2025", "en 2024"), SIEMPRE debes añadir una condición `WHERE YEAR(TuColumnaDeFecha) = [año]` a la consulta.
     ---
     <<< REGLA DE ORO PARA BÚSQUEDA DE PRODUCTOS >>>
-    1. La columna `Nombre_Producto` contiene descripciones largas.
-    2. Si el usuario pregunta por un producto o servicio específico, usa `WHERE LOWER(Nombre_Producto) LIKE '%palabra%'.
+    1. Si en el esquema hay una columna de producto (ej: `Nombre_Producto`), usa `WHERE LOWER(Nombre_Producto) LIKE '%palabra%'.
     ---
     {hist_text}
     Pregunta del usuario: "{pregunta_usuario}"
 
     Devuelve SOLO la consulta SQL (sin explicaciones).
     """
-
+    
     try:
-        # ⬇️ --- ESTE ES EL CAMBIO PRINCIPAL --- ⬇️
         # Llama al LLM directamente para OBTENER el SQL (sin ejecutarlo)
         sql_query_bruta = llm_sql.invoke(prompt_con_instrucciones).content
-        # ⬆️ --- ESTE ES EL CAMBIO PRINCIPAL --- ⬆️
 
         st.text_area("🧩 SQL generado por el modelo:", sql_query_bruta, height=100)
 
         # 🧹 Limpieza robusta del SQL generado
-        sql_query_limpia = limpiar_sql(sql_query_bruta) # Ahora esta función sí se ejecutará
+        sql_query_limpia = limpiar_sql(sql_query_bruta)
 
         # ⚠️ Si aún no empieza con SELECT, intenta extraer la parte válida
         if not sql_query_limpia.lower().startswith("select"):
@@ -349,23 +361,20 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
             if m:
                 sql_query_limpia = m.group(1).strip()
 
-        # 🚨 (Opcional) Esta línea ya no es tan necesaria si 'limpiar_sql' es bueno
-        # sql_query_limpia = re.sub(r'(?i)^sql[\s:]+', '', sql_query_limpia)
-
         # ✅ Asegura que solo sea un SELECT permitido
         sql_query_limpia = _asegurar_select_only(sql_query_limpia)
 
         # Mostrar resultado final
         st.code(sql_query_limpia, language="sql")
-        
-        # 🚀 Ejecutar la consulta SQL (Ahora sí, con el SQL limpio)
+
+        # 🚀 Ejecutar la consulta SQL
         with st.spinner("⏳ Ejecutando consulta..."):
             with db._engine.connect() as conn:
                 df = pd.read_sql(text(sql_query_limpia), conn)
-    
+
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
-        # 🧮 Post-procesamiento igual al tuyo (totales y formato)
+        # 🧮 Post-procesamiento (Este es TU código, que dejamos intacto)
         try:
             if not df.empty:
                 year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
@@ -658,6 +667,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
