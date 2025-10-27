@@ -393,13 +393,22 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
                     df.loc[len(df)] = total_row
 
                 def highlight_total(row):
-                    return [
-                        "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
-                        if str(row.iloc[0]).lower() == "total" else ""
-                    ] * len(row)
+                    return [
+                        "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
+                        if str(row.iloc[0]).lower() == "total" else ""
+                    ] * len(row)
 
-                styled_df = df.style.apply(highlight_total, axis=1)
-                return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+            # --- ⬇️ INICIO DE LA MODIFICACIÓN ⬇️ ---
+                styled_df = df.style.apply(highlight_total, axis=1)
+
+            # 1. Crear un diccionario de formato para las columnas numéricas
+            #    "{:,.0f}" significa: Coma (,) como separador de miles, Cero (.0) decimales.
+            if value_cols:
+                format_map = {col: "{:,.0f}" for col in value_cols}
+                styled_df = styled_df.format(format_map)
+            
+                return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+            # --- ⬆️ FIN DE LA MODIFICACIÓN ⬆️ ---
 
         except Exception as e:
             st.warning(f"No se pudo aplicar formato ni totales: {e}")
@@ -667,6 +676,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
