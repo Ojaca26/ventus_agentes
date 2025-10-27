@@ -306,21 +306,18 @@ def limpiar_sql(sql_texto: str) -> str:
     # Limpieza final
     return limpio.strip().rstrip(';')
 
+
 def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     st.info("🤖 El agente de datos está traduciendo tu pregunta a SQL...")
 
-    # --- ⬇️ ESTA ES LA CORRECCIÓN NUEVA Y CRÍTICA ⬇️ ---
-    # (Obtener el esquema de la tabla)
+    # --- Obtener Esquema ---
     try:
-        # Obtener la info solo de la tabla 'ventus_bi'
-        # Usamos .get_table_info() que está diseñado para esto
         schema_info = db.get_table_info(table_names=["ventus_bi"])
     except Exception as e:
         st.error(f"Error crítico: No se pudo obtener el esquema de la tabla 'ventus_bi'. {e}")
         schema_info = "Error al obtener esquema. Asume columnas estándar."
-    # --- ⬆️ FIN DE LA CORRECCIÓN ⬆️ ---
-
-    # --- ⬇️ ESTE PROMPT TAMBIÉN ESTÁ ACTUALIZADO ⬇️ ---
+    
+    # --- Crear Prompt ---
     prompt_con_instrucciones = f"""
     Tu tarea es generar una consulta SQL limpia (SOLO SELECT) para responder la pregunta del usuario, basándote ESTRICTAMENTE en el siguiente esquema de tabla.
 
@@ -376,6 +373,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
         # 🧮 Post-procesamiento (Este bloque corrige ambos errores)
+        value_cols = [] # Definir fuera del try para tenerla disponible
         try:
             if not df.empty:
                 year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
@@ -385,17 +383,18 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
                 value_cols = [
                     c for c in df.select_dtypes("number").columns
-                    if not re.search(r"(?i)\b(mes|año|dia|fecha)\b", c)
+                    if not re.search(r"(?i)\b(mes|año|dia|fecha|id|codigo)\b", c) # Excluimos IDs también
                 ]
 
                 # --- ⬇️ CORRECCIÓN PARA EL ERROR DE PYARROW ⬇️ ---
-                if value_cols:
+                if value_cols and len(df) > 1: # Solo añade Total si hay datos y columnas de valor
                     total_row = {}
                     for col in df.columns:
                         if col in value_cols:
-                            total_row[col] = df[col].sum()
-                        # Si la columna es numérica (como 'Mes') pero no es de valor (como 'Facturacion'),
-                        # usa np.nan para el total, no un string vacío ''.
+                            if pd.api.types.is_numeric_dtype(df[col]):
+                                total_row[col] = df[col].sum()
+                            else:
+                                total_row[col] = np.nan
                         elif pd.api.types.is_numeric_dtype(df[col]):
                             total_row[col] = np.nan
                         else:
@@ -406,28 +405,40 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
                     df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
                 # --- ⬆️ FIN DE LA CORRECCIÓN ⬆️ ---
 
+            # --- ⬇️ INICIO DE LA MODIFICACIÓN DE FORMATO ⬇️ ---
 
-                def highlight_total(row):
-                    # Esta es la línea que probablemente tenía el error U+00A0
-                    return [
-                        "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
-                        if str(row.iloc[0]).lower() == "total" else ""
-                    ] * len(row)
+            def highlight_total(row):
+                # Esta es la línea que probablemente tenía el error U+00A0
+                if isinstance(row.iloc[0], str) and row.iloc[0].lower() == "total":
+                    return ["font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"] * len(row)
+                else:
+                    return [""] * len(row)
 
-                styled_df = df.style.apply(highlight_total, axis=1)
+            styled_df = df.style.apply(highlight_total, axis=1)
 
-                # Aplicar formato de miles
-                if value_cols:
-                    # Oculta los 'NaN' que pusimos en la columna 'Mes'
-                    format_map = {col: "{:,.0f}" for col in value_cols}
-                    styled_df = styled_df.format(format_map, na_rep="") 
+            # 1. Crear mapa de formato base para columnas de valor (miles, 0 decimales)
+            format_map = {col: "{:,.0f}" for col in value_cols}
 
-                return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+            # 2. Añadir formato específico para 'Mes' (entero, 0 decimales)
+            if "Mes" in df.columns:
+                format_map["Mes"] = "{:.0f}"
+
+            # 3. (A futuro) Añadir formato para columnas de porcentaje
+            percent_cols = [col for col in df.columns if "porcentaje" in col.lower() or "%" in col.lower()]
+            for col in percent_cols:
+                format_map[col] = "{:,.2f}%" # 2 decimales y el símbolo %
+
+            # 4. Aplicar TODOS los formatos.
+            styled_df = styled_df.format(format_map, na_rep="")
+            
+            # --- ⬆️ FIN DE LA MODIFICACIÓN DE FORMATO ⬆️ ---
+
+            return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
 
         except Exception as e:
             st.warning(f"No se pudo aplicar formato ni totales: {e}")
-
-        return {"sql": sql_query_limpia, "df": df}
+            # Si falla el estilo, al menos devolvemos los datos crudos
+            return {"sql": sql_query_limpia, "df": df}
 
 
     except Exception as e:
@@ -704,6 +715,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
