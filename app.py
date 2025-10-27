@@ -2,6 +2,7 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import re
 import io
 from typing import Optional
@@ -374,7 +375,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
-        # 🧮 Post-procesamiento (Este es TU código, que dejamos intacto)
+        # 🧮 Post-procesamiento (Este bloque corrige ambos errores)
         try:
             if not df.empty:
                 year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
@@ -387,33 +388,47 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
                     if not re.search(r"(?i)\b(mes|año|dia|fecha)\b", c)
                 ]
 
+                # --- ⬇️ CORRECCIÓN PARA EL ERROR DE PYARROW ⬇️ ---
                 if value_cols:
-                    total_row = {col: df[col].sum() if col in value_cols else "" for col in df.columns}
+                    total_row = {}
+                    for col in df.columns:
+                        if col in value_cols:
+                            total_row[col] = df[col].sum()
+                        # Si la columna es numérica (como 'Mes') pero no es de valor (como 'Facturacion'),
+                        # usa np.nan para el total, no un string vacío ''.
+                        elif pd.api.types.is_numeric_dtype(df[col]):
+                            total_row[col] = np.nan
+                        else:
+                            total_row[col] = ""
+                    
                     total_row[df.columns[0]] = "Total"
-                    df.loc[len(df)] = total_row
+                    # Usamos pd.concat en lugar de .loc para evitar advertencias futuras
+                    df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+                # --- ⬆️ FIN DE LA CORRECCIÓN ⬆️ ---
+
 
                 def highlight_total(row):
-                    return [
-                        "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
-                        if str(row.iloc[0]).lower() == "total" else ""
-                    ] * len(row)
+                    # Esta es la línea que probablemente tenía el error U+00A0
+                    return [
+                        "font-weight: bold; background-color: #f8f9fa; border-top: 2px solid #999;"
+                        if str(row.iloc[0]).lower() == "total" else ""
+                    ] * len(row)
 
-            # --- ⬇️ INICIO DE LA MODIFICACIÓN ⬇️ ---
-                styled_df = df.style.apply(highlight_total, axis=1)
+                styled_df = df.style.apply(highlight_total, axis=1)
 
-            # 1. Crear un diccionario de formato para las columnas numéricas
-            #    "{:,.0f}" significa: Coma (,) como separador de miles, Cero (.0) decimales.
-            if value_cols:
-                format_map = {col: "{:,.0f}" for col in value_cols}
-                styled_df = styled_df.format(format_map)
-            
-                return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
-            # --- ⬆️ FIN DE LA MODIFICACIÓN ⬆️ ---
+                # Aplicar formato de miles
+                if value_cols:
+                    # Oculta los 'NaN' que pusimos en la columna 'Mes'
+                    format_map = {col: "{:,.0f}" for col in value_cols}
+                    styled_df = styled_df.format(format_map, na_rep="") 
+
+                return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
 
         except Exception as e:
             st.warning(f"No se pudo aplicar formato ni totales: {e}")
 
         return {"sql": sql_query_limpia, "df": df}
+
 
     except Exception as e:
         st.warning(f"❌ Error en la consulta directa. Intentando método alternativo... Detalle: {e}")
@@ -686,6 +701,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
