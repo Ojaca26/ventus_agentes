@@ -429,7 +429,20 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
                 format_map[col] = "{:,.2f}%" # 2 decimales y el símbolo %
 
             # 4. Aplicar TODOS los formatos.
-            styled_df = styled_df.format(format_map, na_rep="")
+            def safe_formatter(fmt):
+                def inner(x):
+                    try:
+                        # Manejar NaN explícitamente
+                        if x is None or (isinstance(x, float) and np.isnan(x)):
+                            return ""
+                        return fmt.format(float(x))
+                    except:
+                        # Si no se puede formatear (ej: 'Total', ''), devolver tal cual
+                        return x
+                return inner
+
+            safe_format_map = {col: safe_formatter(fmt) for col, fmt in format_map.items()}
+            styled_df = styled_df.format(safe_format_map, na_rep="")
             
             # --- ⬆️ FIN DE LA MODIFICACIÓN DE FORMATO ⬆️ ---
 
@@ -715,6 +728,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
