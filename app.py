@@ -66,18 +66,12 @@ def get_llms():
         try:
             api_key = st.secrets["openai_api_key"]
             model_name = "gpt-4o"
-            llm_sql = ChatOpenAI(model=model_name, temperature=0.1, openai_api_key=api_key)
+            llm_sql = ChatOpenAI(model=model_name, temperature=0.0, openai_api_key=api_key)
             llm_analista = ChatOpenAI(model=model_name, temperature=0.1, openai_api_key=api_key)
             llm_orq = ChatOpenAI(model=model_name, temperature=0.0, openai_api_key=api_key)
-            llm_validador = ChatOpenAI(model=model_name, temperature=0.0, openai_api_key=api_key)
+            llm_validador = ChatOpenAI(model=model_name, temperature=0.1, openai_api_key=api_key)
 
-            #api_key = st.secrets["google_api_key"]
-            #common_config = dict(temperature=0.1, google_api_key=api_key)
-            #llm_sql = ChatGoogleGenerativeAI(model="gemini-1.5-pro", **common_config)
-            #llm_analista = ChatGoogleGenerativeAI(model="gemini-1.5-pro", **common_config)
-            #llm_orq = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.0, google_api_key=api_key)
-            #llm_validador = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0.0, google_api_key=api_key)
-            
+                
             st.success("✅ Agentes de IANA listos.")
             return llm_sql, llm_analista, llm_orq, llm_validador
         except Exception as e:
@@ -728,6 +722,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
