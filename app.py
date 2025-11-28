@@ -36,7 +36,7 @@ with col1:
     st.image("logo_datainsights.png", width=120)
 with col2:
     st.title("IANA: Tu Asistente IA para Análisis de Datos")
-    st.markdown("Soy la red de agentes IA de **DATAINSIGHTS**. Hazme una pregunta sobre los datos del proyecto IGUANA.")
+    st.markdown("Soy la red de agentes IA de **DATAINSIGHTS**. Hazme una pregunta sobre los datos del proyecto.")
 
 # ============================================
 # 1) Conexión a la Base de Datos y LLMs
@@ -728,6 +728,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
