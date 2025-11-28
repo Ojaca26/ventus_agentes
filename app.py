@@ -29,6 +29,7 @@ import json
 # ============================================
 # 0) Configuración de la Página y Título
 # ============================================
+st.set_option("client.showErrorDetails", False)
 st.set_page_config(page_title="IANA para DataInsights", page_icon="logo_datainsights.png", layout="wide")
 
 col1, col2 = st.columns([1, 4])
@@ -722,6 +723,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
