@@ -53,7 +53,7 @@ def get_database_connection():
                 "pool_pre_ping": True,
                 "connect_args": {"connect_timeout": 10}  # ⏱️ límite de conexión 10 segundos
             }
-            db = SQLDatabase.from_uri(uri, include_tables=["ventus_bi"], engine_args=engine_args)
+            db = SQLDatabase.from_uri(uri, include_tables=["datainsights_bi"], engine_args=engine_args)
             st.success("✅ Conexión a la base de datos establecida.")
             return db
         except Exception as e:
@@ -312,7 +312,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
     # --- Obtener Esquema ---
     try:
-        schema_info = db.get_table_info(table_names=["ventus_bi"])
+        schema_info = db.get_table_info(table_names=["datainsights_bi"])
     except Exception as e:
         st.error(f"Error crítico: No se pudo obtener el esquema de la tabla 'datainsights_bi'. {e}")
         schema_info = "Error al obtener esquema. Asume columnas estándar."
@@ -321,7 +321,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     prompt_con_instrucciones = f"""
     Tu tarea es generar una consulta SQL limpia (SOLO SELECT) para responder la pregunta del usuario, basándote ESTRICTAMENTE en el siguiente esquema de tabla.
 
-    --- ESQUEMA DE LA TABLA 'ventus_bi' ---
+    --- ESQUEMA DE LA TABLA 'datainsights_bi' ---
     {schema_info}
     --- FIN DEL ESQUEMA ---
 
@@ -461,7 +461,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
 def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     st.info("🤔 Activando el agente SQL experto como plan B.")
-    prompt_sql = (f"Tu tarea es responder la pregunta consultando la tabla 'ventus_bi'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown (con encabezados). NUNCA resumas ni expliques. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
+    prompt_sql = (f"Tu tarea es responder la pregunta consultando la tabla 'datainsights_bi'.\n{hist_text}\nDevuelve ÚNICAMENTE una tabla en formato Markdown (con encabezados). NUNCA resumas ni expliques. El SQL interno NO DEBE CONTENER 'LIMIT'.\nPregunta: {pregunta_usuario}")
     try:
         with st.spinner("💬 Pidiendo al agente SQL que responda..."):
             res = agente_sql.invoke(prompt_sql)
@@ -728,6 +728,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
