@@ -29,14 +29,14 @@ import json
 # ============================================
 # 0) Configuración de la Página y Título
 # ============================================
-st.set_page_config(page_title="IANA para Ventus", page_icon="logo_ventus.png", layout="wide")
+st.set_page_config(page_title="IANA para DataInsights", page_icon="logo_datainsights.png", layout="wide")
 
 col1, col2 = st.columns([1, 4])
 with col1:
-    st.image("logo_ventus.png", width=120)
+    st.image("logo_datainsights.png", width=120)
 with col2:
     st.title("IANA: Tu Asistente IA para Análisis de Datos")
-    st.markdown("Soy la red de agentes IA de **VENTUS**. Hazme una pregunta sobre los datos del proyecto IGUANA.")
+    st.markdown("Soy la red de agentes IA de **DATAINSIGHTS**. Hazme una pregunta sobre los datos del proyecto IGUANA.")
 
 # ============================================
 # 1) Conexión a la Base de Datos y LLMs
@@ -44,7 +44,7 @@ with col2:
 
 @st.cache_resource
 def get_database_connection():
-    with st.spinner("🛰️ Conectando a la base de datos de Ventus..."):
+    with st.spinner("🛰️ Conectando a la base de datos de Datainsights..."):
         try:
             creds = st.secrets["db_credentials"]
             uri = f"mysql+pymysql://{creds['user']}:{creds['password']}@{creds['host']}/{creds['database']}"
@@ -314,7 +314,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
     try:
         schema_info = db.get_table_info(table_names=["ventus_bi"])
     except Exception as e:
-        st.error(f"Error crítico: No se pudo obtener el esquema de la tabla 'ventus_bi'. {e}")
+        st.error(f"Error crítico: No se pudo obtener el esquema de la tabla 'datainsights_bi'. {e}")
         schema_info = "Error al obtener esquema. Asume columnas estándar."
     
     # --- Crear Prompt ---
@@ -486,7 +486,7 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     return analisis
 def responder_conversacion(pregunta_usuario: str, hist_text: str):
     st.info("💬 Activando modo de conversación...")
-    prompt_personalidad = f"""Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.\nSi el usuario hace un comentario casual, responde amablemente de forma natural, muy humana y redirígelo a tus capacidades.\n{hist_text}\nPregunta: "{pregunta_usuario}" """
+    prompt_personalidad = f"""Tu nombre es IANA, una IA amable de Datainisghts. Ayuda a analizar datos.\nSi el usuario hace un comentario casual, responde amablemente de forma natural, muy humana y redirígelo a tus capacidades.\n{hist_text}\nPregunta: "{pregunta_usuario}" """
     respuesta = llm_analista.invoke(prompt_personalidad).content
     return {"texto": respuesta, "df": None, "analisis": None}
 
@@ -659,7 +659,7 @@ def orquestador(pregunta_usuario: str, chat_history: list):
 # ============================================
 
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Ventus. ¿Qué te gustaría saber?"}}]
+    st.session_state.messages = [{"role": "assistant", "content": {"texto": "¡Hola! Soy IANA, tu asistente de IA de Datainisghts. ¿Qué te gustaría saber?"}}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -728,6 +728,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
