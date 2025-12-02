@@ -516,18 +516,74 @@ def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
     except Exception as e:
         st.error(f"❌ El agente SQL experto también encontró un problema: {e}")
         return {"texto": f"[SQL_ERROR] {e}", "df": pd.DataFrame()}
-def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame | None, feedback: str = None):
+
+def analizar_con_datos(pregunta_usuario: str, hist_text: str, res_analisis: dict, feedback: str = None):
     st.info("\n🧠 El analista experto está examinando los datos...")
-    correccion_prompt = ""
+
+    df = res_analisis.get("df")
+    if df is None or df.empty:
+        return "No hay datos para analizar."
+
+    # ---- TOTALES REALES CALCULADOS DESDE SQL ----
+    totales_dict = res_analisis.get("totales_dict", {})
+    texto_totales = res_analisis.get("totales_texto", "(totales no calculados)")
+
+    # ---- PREVIEW COMPLETO (TODAS LAS FILAS) ----
+    try:
+        preview = df.to_markdown(index=False)
+    except:
+        preview = df.head(200).to_markdown(index=False)
+
+    # ---- FEEDBACK SI FALLÓ ANTES ----
+    correccion = ""
     if feedback:
-        st.warning(f"⚠️ Reintentando con feedback: {feedback}")
-        correccion_prompt = (f'INSTRUCCIÓN DE CORRECCIÓN: Tu respuesta anterior fue incorrecta. Feedback: "{feedback}". Genera una NUEVA respuesta corrigiendo este error.')
-    preview = _df_preview(df, 50) or "(sin datos en vista previa; verifica la consulta)"
-    prompt_analisis = f"""{correccion_prompt}\nEres IANA, un analista de datos senior EXTREMADAMENTE PRECISO y riguroso.\n---\n<<< REGLAS CRÍTICAS DE PRECISIÓN >>>\n1. **NO ALUCINAR**: NUNCA inventes números, totales, porcentajes o nombres de productos/categorías que no estén EXPRESAMENTE en la tabla de 'Datos'.\n2. **DATOS INCOMPLETOS**: Reporta los vacíos (p.ej., "sin datos para Marzo") sin inventar valores.\n3. **VERIFICAR CÁLCULOS**: Antes de escribir un número, revisa el cálculo (sumas/conteos/promedios) con los datos.\n4. **CITAR DATOS**: Basa CADA afirmación que hagas en los datos visibles en la tabla.\n---\nPregunta Original: {pregunta_usuario}\n{hist_text}\nDatos para tu análisis (usa SÓLO estos):\n{preview}\n---\nFORMATO OBLIGATORIO:\n📌 Análisis Ejecutivo de datos:\n1. Calcular totales y porcentajes clave.\n2. Detectar concentración.\n3. Identificar patrones temporales.\n4. Analizar dispersión.\nEntregar el resultado en 3 bloques:\n📌 Resumen Ejecutivo: hallazgos principales con números.\n🔍 Números de referencia: totales, promedios, ratios.\n⚠ Importante: Sé muy breve, directo y diciente."""
+        correccion = f"""INSTRUCCIÓN DE CORRECCIÓN:
+Tu análisis anterior contenía errores.
+Feedback: "{feedback}".
+Corrige esos errores y vuelve a generar el análisis SIN inventar nada.
+"""
+
+    # ---- PROMPT DEFINITIVO (ANTI-ALUCINACIÓN) ----
+    prompt_analisis = f"""
+{correccion}
+
+Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO.
+NO puedes inventar ningún número. TODAS las cifras deben salir EXCLUSIVAMENTE de:
+
+1) La tabla completa de datos.
+2) Los TOTALES REALES calculados automáticamente.
+
+Si un número NO aparece allí, NO LO USES.
+
+--- TOTALES REALES (OBLIGATORIOS) ---
+{texto_totales}
+--- FIN TOTALES ---
+
+--- DATOS COMPLETOS PARA ANALIZAR ---
+{preview}
+--- FIN DATOS ---
+
+Pregunta del usuario:
+"{pregunta_usuario}"
+
+--- FORMATO OBLIGATORIO ---
+📌 Resumen Ejecutivo:
+- Principales hallazgos con cifras reales.
+
+🔍 Números de referencia:
+- Totales, promedios, máximos, mínimos y ratios (solo si están en los datos).
+
+⚠ Importante:
+- Riesgos, alertas o patrones relevantes.
+- NO inventes nada. Si falta un dato, dilo.
+"""
+
     with st.spinner("💡 Generando análisis avanzado..."):
         analisis = llm_analista.invoke(prompt_analisis).content
+
     st.success("💡 ¡Análisis completado!")
     return analisis
+
 def responder_conversacion(pregunta_usuario: str, hist_text: str):
     st.info("💬 Activando modo de conversación...")
     prompt_personalidad = f"""Tu nombre es IANA, una IA amable de Ventus. Ayuda a analizar datos.\nSi el usuario hace un comentario casual, responde amablemente de forma natural, muy humana y redirígelo a tus capacidades.\n{hist_text}\nPregunta: "{pregunta_usuario}" """
@@ -793,30 +849,3 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
