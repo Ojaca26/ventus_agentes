@@ -574,7 +574,12 @@ def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: d
                 if intento < MAX_INTENTOS - 1:
                     st.info("🔄 Regenerando análisis con feedback...")
                     res_analisis["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_analisis.get("df"), feedback=feedback_previo)
-                else: return {"tipo": "error", "texto": "El análisis no fue satisfactorio incluso después de una corrección."}
+                    # Continua el ciclo para el siguiente intento
+                else:
+                    # Último intento: avisar pero devolver lo que hay
+                    st.warning("⚠️ Último intento. Entregando análisis a pesar del rechazo.")
+                    return res_analisis
+            
             else: return {"tipo": "error", "texto": f"Respuesta ambigua del validador: {resultado}"}
         except Exception as e: return {"tipo": "error", "texto": f"Excepción durante la validación: {e}"}
     return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
@@ -744,6 +749,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
