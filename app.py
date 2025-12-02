@@ -527,7 +527,7 @@ def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame |
     try:
         preview = df.to_markdown(index=False)
     except Exception:
-        preview = df.head(200).to_markdown(index=False)
+        preview = df.head(200).to_string(index=False)
 
     # ---- BLOQUE DE TOTALES ----
     if not totales_texto:
@@ -856,5 +856,6 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
