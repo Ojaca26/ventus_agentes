@@ -517,49 +517,48 @@ def ejecutar_sql_en_lenguaje_natural(pregunta_usuario: str, hist_text: str):
         st.error(f"❌ El agente SQL experto también encontró un problema: {e}")
         return {"texto": f"[SQL_ERROR] {e}", "df": pd.DataFrame()}
 
-def analizar_con_datos(pregunta_usuario: str, hist_text: str, res_analisis: dict, feedback: str = None):
+def analizar_con_datos(pregunta_usuario: str, hist_text: str, df: pd.DataFrame | None, totales_texto: str = "", totales_dict: dict = None, feedback: str = None):
     st.info("\n🧠 El analista experto está examinando los datos...")
 
-    df = res_analisis.get("df")
     if df is None or df.empty:
         return "No hay datos para analizar."
 
-    # ---- TOTALES REALES CALCULADOS DESDE SQL ----
-    totales_dict = res_analisis.get("totales_dict", {})
-    texto_totales = res_analisis.get("totales_texto", "(totales no calculados)")
-
-    # ---- PREVIEW COMPLETO (TODAS LAS FILAS) ----
+    # ---- PREVIEW COMPLETO ----
     try:
         preview = df.to_markdown(index=False)
-    except:
+    except Exception:
         preview = df.head(200).to_markdown(index=False)
 
-    # ---- FEEDBACK SI FALLÓ ANTES ----
+    # ---- BLOQUE DE TOTALES ----
+    if not totales_texto:
+        totales_texto = "(totales no detectados)"
+    if totales_dict is None:
+        totales_dict = {}
+
+    # ---- FEEDBACK ----
     correccion = ""
     if feedback:
         correccion = f"""INSTRUCCIÓN DE CORRECCIÓN:
 Tu análisis anterior contenía errores.
 Feedback: "{feedback}".
-Corrige esos errores y vuelve a generar el análisis SIN inventar nada.
+Corrige esos errores SIN inventar nada.
 """
 
-    # ---- PROMPT DEFINITIVO (ANTI-ALUCINACIÓN) ----
+    # ---- PROMPT FINAL ----
     prompt_analisis = f"""
 {correccion}
 
-Eres IANA, un analista de datos senior EXTREMADAMENTE PRECISO.
-NO puedes inventar ningún número. TODAS las cifras deben salir EXCLUSIVAMENTE de:
+Eres IANA, un analista de datos senior extremadamente preciso.
+NO puedes inventar valores. TODAS las cifras deben salir exclusivamente de:
 
-1) La tabla completa de datos.
-2) Los TOTALES REALES calculados automáticamente.
+1) la tabla de datos completa
+2) los totales reales de la base, calculados por el sistema
 
-Si un número NO aparece allí, NO LO USES.
-
---- TOTALES REALES (OBLIGATORIOS) ---
-{texto_totales}
+--- TOTALES REALES ---
+{totales_texto}
 --- FIN TOTALES ---
 
---- DATOS COMPLETOS PARA ANALIZAR ---
+--- DATOS COMPLETOS (NO INVENTAR) ---
 {preview}
 --- FIN DATOS ---
 
@@ -568,21 +567,22 @@ Pregunta del usuario:
 
 --- FORMATO OBLIGATORIO ---
 📌 Resumen Ejecutivo:
-- Principales hallazgos con cifras reales.
+- Hallazgos principales con cifras REALES.
 
 🔍 Números de referencia:
-- Totales, promedios, máximos, mínimos y ratios (solo si están en los datos).
+- Totales, promedios, máximos, mínimos, % (solo si se derivan de los datos).
 
 ⚠ Importante:
-- Riesgos, alertas o patrones relevantes.
-- NO inventes nada. Si falta un dato, dilo.
-"""
+- Riesgos o alertas.
+- NO inventar. Si falta un dato, dilo.
+    """
 
     with st.spinner("💡 Generando análisis avanzado..."):
         analisis = llm_analista.invoke(prompt_analisis).content
 
     st.success("💡 ¡Análisis completado!")
     return analisis
+
 
 def responder_conversacion(pregunta_usuario: str, hist_text: str):
     st.info("💬 Activando modo de conversación...")
@@ -849,3 +849,4 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
