@@ -390,8 +390,11 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
 
         st.success(f"✅ ¡Consulta ejecutada! Filas: {len(df)}")
 
-        # 🧮 Post-procesamiento (Este bloque corrige ambos errores)
-        value_cols = [] # Definir fuera del try para tenerla disponible
+        # 🟢 CAMBIO 1: guardar versión sin fila Total
+        df_original = df.copy()
+
+        # 🧮 Post-procesamiento
+        value_cols = []
         try:
             if not df.empty:
                 year_match = re.search(r"YEAR\([^)]*\)\s*=\s*(\d{4})", sql_query_limpia)
@@ -468,13 +471,13 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
             # Cálculo de totales relevantes
             # ==========================
             try:
-                columnas_valor = seleccionar_columnas_valor(df)
-                totales_dict = {col: df[col].sum() for col in columnas_valor}
+                # 🟢 CAMBIO 2: usar df_original, NO df
+                columnas_valor = seleccionar_columnas_valor(df_original)
+                totales_dict = {col: df_original[col].sum() for col in columnas_valor}
 
-                # Transformar a texto legible para el prompt del analista
-                texto_totales = "\n".join([f"{c}: {int(v):,}" for c, v in totales_dict.items()]) if totales_dict else "(no se detectaron columnas de valor para totales)"
+                texto_totales = "\n".join([f"{c}: {int(v):,}" for c, v in totales_dict.items()]) \
+                    if totales_dict else "(no se detectaron columnas de valor para totales)"
 
-                # Guardarlo dentro del resultado
                 res_totales = {
                     "totales_texto": texto_totales,
                     "totales_dict": totales_dict
@@ -484,6 +487,7 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
                     "totales_texto": "(error al calcular totales)",
                     "totales_dict": {}
                 }
+            
             res = {"sql": sql_query_limpia, "df": df, "styled": styled_df}
             res.update(res_totales)
             return res
@@ -789,6 +793,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
