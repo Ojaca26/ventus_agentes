@@ -772,7 +772,14 @@ def orquestador(pregunta_usuario: str, chat_history: list):
 
         if clasificacion == "analista":
             st.info("🧠 Generando análisis inicial...")
-            res_datos["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_datos.get("df"))
+            res_datos["analisis"] = analizar_con_datos(
+                pregunta_usuario,
+                hist_text,
+                res_datos.get("df"),
+                res_datos.get("totales_texto", ""),
+                res_datos.get("totales_dict", {}),
+                feedback=None
+            )
             return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
 
 # ============================================
@@ -849,4 +856,5 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
