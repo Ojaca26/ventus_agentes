@@ -234,6 +234,25 @@ def enviar_correo_agente(recipient: str, subject: str, body: str, df: Optional[p
 # 3) Funciones Auxiliares y Agentes (SIN CAMBIOS)
 # ============================================
 # (Todas las funciones desde _coerce_numeric_series hasta responder_conversacion se mantienen igual)
+def seleccionar_columnas_valor(df: pd.DataFrame) -> list[str]:
+    """
+    Selecciona columnas numéricas que probablemente representen valores a totalizar,
+    usando palabras clave en el nombre.
+    """
+    # Todas las columnas numéricas
+    num_cols = df.select_dtypes(include="number").columns.tolist()  # pandas recomienda usar np.number o 'number'. :contentReference[oaicite:0]{index=0}
+
+    # Filtrar por palabras clave de negocio relevantes
+    patron = re.compile(r"(COP|USD|Monto|Valor|Total|Costo|Facturado|Pendiente)", re.IGNORECASE)
+
+    columnas_valor = [c for c in num_cols if patron.search(c)]
+
+    # Excluir columnas de control/ID si existieran
+    excluir = {"id", "codigo"}
+    columnas_valor = [c for c in columnas_valor if c.lower() not in excluir]
+
+    return columnas_valor
+
 def _coerce_numeric_series(s: pd.Series) -> pd.Series:
     s2 = s.astype(str).str.replace(r'[\u00A0\s]', '', regex=True).str.replace(',', '', regex=False).str.replace('$', '', regex=False).str.replace('%', '', regex=False)
     try: return pd.to_numeric(s2)
@@ -279,7 +298,6 @@ def _asegurar_select_only(sql: str) -> str:
     if not re.match(r'(?is)^\s*select\b', sql_clean): raise ValueError("Solo se permite ejecutar consultas SELECT.")
     sql_clean = re.sub(r'(?is)\blimit\s+\d+\s*$', '', sql_clean).strip()
     return sql_clean
-
 
 def limpiar_sql(sql_texto: str) -> str:
     """
@@ -749,6 +767,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
