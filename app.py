@@ -464,7 +464,29 @@ def ejecutar_sql_real(pregunta_usuario: str, hist_text: str):
             
             # --- ⬆️ FIN DE LA MODIFICACIÓN DE FORMATO ⬆️ ---
 
-            return {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+            # ==========================
+            # Cálculo de totales relevantes
+            # ==========================
+            try:
+                columnas_valor = seleccionar_columnas_valor(df)
+                totales_dict = {col: df[col].sum() for col in columnas_valor}
+
+                # Transformar a texto legible para el prompt del analista
+                texto_totales = "\n".join([f"{c}: {int(v):,}" for c, v in totales_dict.items()]) if totales_dict else "(no se detectaron columnas de valor para totales)"
+
+                # Guardarlo dentro del resultado
+                res_totales = {
+                    "totales_texto": texto_totales,
+                    "totales_dict": totales_dict
+                }
+            except Exception as e:
+                res_totales = {
+                    "totales_texto": "(error al calcular totales)",
+                    "totales_dict": {}
+                }
+            res = {"sql": sql_query_limpia, "df": df, "styled": styled_df}
+            res.update(res_totales)
+            return res
 
         except Exception as e:
             st.warning(f"No se pudo aplicar formato ni totales: {e}")
@@ -767,6 +789,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
