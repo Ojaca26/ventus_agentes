@@ -641,49 +641,9 @@ def generar_resumen_tabla(pregunta_usuario: str, res: dict) -> dict:
 # ============================================
 # 4) Orquestador y Validación
 # ============================================
-def validar_y_corregir_respuesta_analista(pregunta_usuario: str, res_analisis: dict, hist_text: str) -> dict:
-    MAX_INTENTOS = 2
-    for intento in range(MAX_INTENTOS):
-        st.info(f"🕵️‍♀️ Supervisor de Calidad: Verificando análisis (Intento {intento + 1})..."); contenido_respuesta = res_analisis.get("analisis", "") or ""
-        if not contenido_respuesta.strip(): return {"tipo": "error", "texto": "El análisis generado estaba vacío."}
-        df_preview = _df_preview(res_analisis.get("df"), 50) or "(sin vista previa de datos)"
-        prompt_validacion = f"""
-        Eres un supervisor de calidad. Tu tarea es verificar si el 'Análisis' se basa en los 'Datos de Soporte'.
-        FORMATO:
-        - Si el análisis está fundamentado en los datos: APROBADO
-        - Si hay evidencia de invención, información no relevante, o afirmaciones que no se apoyan en los datos: RECHAZADO: [razón corta y accionable]
-
-        ---
-        Pregunta: "{pregunta_usuario}"
-        Datos de Soporte:
-        {df_preview}
-        ---
-        Análisis a evaluar:
-        \"\"\"{contenido_respuesta}\"\"\"
-        ---
-        Evaluación:
-        """
-
-        try:
-            resultado = llm_validador.invoke(prompt_validacion).content.strip(); up = resultado.upper()
-            if up.startswith("APROBADO"):
-                st.success("✅ Análisis aprobado por el Supervisor."); return res_analisis
-            elif up.startswith("RECHAZADO"):
-                feedback_previo = resultado.split(":", 1)[1].strip() if ":" in resultado else "Razón no especificada."
-                st.warning(f"❌ Análisis rechazado. Feedback: {feedback_previo}")
-                if intento < MAX_INTENTOS - 1:
-                    st.info("🔄 Regenerando análisis con feedback...")
-                    res_analisis["analisis"] = analizar_con_datos(pregunta_usuario, hist_text, res_analisis.get("df"), feedback=feedback_previo)
-                    # Continua el ciclo para el siguiente intento
-                else:
-                    # Último intento: avisar pero devolver lo que hay
-                    st.warning("⚠️ Último intento. Entregando análisis a pesar del rechazo.")
-                    return res_analisis
-            
-            else: return {"tipo": "error", "texto": f"Respuesta ambigua del validador: {resultado}"}
-        except Exception as e: return {"tipo": "error", "texto": f"Excepción durante la validación: {e}"}
-    return {"tipo": "error", "texto": "Se alcanzó el límite de intentos de validación."}
-
+# ============================================
+# 4) Orquestador y Validación
+# ============================================
 def clasificar_intencion(pregunta: str) -> str:
     prompt_orq = f"""
 Clasifica la intención del usuario en UNA SOLA PALABRA: `consulta`, `analista`, `correo` o `conversacional`.
@@ -856,6 +816,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
