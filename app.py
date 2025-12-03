@@ -714,11 +714,6 @@ def orquestador(pregunta_usuario: str, chat_history: list):
         if res_datos.get("df") is None or res_datos["df"].empty:
             return {"tipo": "error", "texto": "Lo siento, no pude obtener datos para tu pregunta. Intenta reformularla."}
 
-        #if clasificacion == "consulta":
-        #    st.success("✅ Consulta directa completada.")
-        #    return interpretar_resultado_sql(res_datos)
-
-
         if clasificacion == "consulta":
             st.success("✅ Consulta directa completada.")
             # Primero, intentamos interpretar el resultado como siempre
@@ -732,6 +727,8 @@ def orquestador(pregunta_usuario: str, chat_history: list):
 
         if clasificacion == "analista":
             st.info("🧠 Generando análisis inicial...")
+            # 💡 Eliminación del supervisor: Ya no se llama a validar_y_corregir_respuesta_analista.
+            # Se genera el análisis y se devuelve inmediatamente.
             res_datos["analisis"] = analizar_con_datos(
                 pregunta_usuario,
                 hist_text,
@@ -740,7 +737,8 @@ def orquestador(pregunta_usuario: str, chat_history: list):
                 res_datos.get("totales_dict", {}),
                 feedback=None
             )
-            return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text)
+            return res_datos # 👈 CAMBIO CLAVE: Devolver el resultado inmediatamente sin validación.
+            # return validar_y_corregir_respuesta_analista(pregunta_usuario, res_datos, hist_text) # 👈 Línea eliminada
 
 # ============================================
 # 5) Interfaz: Micrófono en vivo + Chat
@@ -816,6 +814,7 @@ elif prompt_text:
 if prompt_a_procesar:
     procesar_pregunta(prompt_a_procesar)
     
+
 
 
 
