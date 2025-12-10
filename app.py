@@ -663,7 +663,7 @@ def consultar_equipo_oml(pregunta: str):
     mapa_equipos = {
         "andres": "tbl_gen_andres", "andrés": "tbl_gen_andres", "staff 1": "tbl_gen_andres", "grupo 1": "tbl_gen_andres",
         "camilo": "tbl_gen_camilo", "staff 2": "tbl_gen_camilo", "grupo 2": "tbl_gen_camilo",
-        "maira": "tbl_gen_maira", "mayra": "tbl_gen_maira", "staf 3": "tbl_gen_maira", "grupo 3": "tbl_gen_maira",
+        "maira": "tbl_gen_maira", "mayra": "tbl_gen_maira", "staff 3": "tbl_gen_maira", "grupo 3": "tbl_gen_maira",
         "mateo": "tbl_gen_mateo", "staff 4": "tbl_gen_mateo", "grupo 4": "tbl_gen_mateo",
         "simon": "tbl_gen_simon", "simón": "tbl_gen_simon", "staff 5": "tbl_gen_simon", "grupo 5": "tbl_gen_simon"
     }
