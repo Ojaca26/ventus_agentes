@@ -6,7 +6,7 @@ import numpy as np
 import re
 import io
 from typing import Optional
-from sqlalchemy import text
+from sqlalchemy import text, create_engine
 
 # LangChain + Gemini / OpenAI
 from langchain_openai import ChatOpenAI
@@ -638,9 +638,86 @@ def generar_resumen_tabla(pregunta_usuario: str, res: dict) -> dict:
         res["texto"] = "Aquí están los datos que solicitaste:"
     return res
 
+
 # ============================================
-# 4) Orquestador y Validación
+# BLOQUE OML: Gestión de Equipos Externos
 # ============================================
+
+@st.cache_resource
+def get_connection_oml():
+    """Conexión específica para la base de datos de OML (Equipos)."""
+    try:
+        creds = st.secrets["db_credentials_oml"]
+        # Usamos pymysql directo para rapidez o SQLAlchemy
+        uri = f"mysql+pymysql://{creds['user']}:{creds['password']}@{creds['host']}/{creds['database']}"
+        engine = create_engine(uri, pool_recycle=3600, connect_args={"connect_timeout": 10})
+        return engine
+    except Exception as e:
+        st.error(f"❌ Error conectando a OML: {e}")
+        return None
+
+def consultar_equipo_oml(pregunta: str):
+    """
+    Detecta el nombre del líder en la pregunta y consulta su tabla específica.
+    """
+    # 1. Mapeo: Nombre en la pregunta -> Nombre de la tabla real
+    # Según la imagen 1, las tablas son: tbl_gen_andres, tbl_gen_camilo, etc.
+    mapa_equipos = {
+        "andres": "tbl_gen_andres",
+        "andrés": "tbl_gen_andres", # Por si ponen tilde
+        "camilo": "tbl_gen_camilo",
+        "maira": "tbl_gen_maira",
+        "mayra": "tbl_gen_maira",   # Por si escriben mal
+        "mateo": "tbl_gen_mateo",
+        "simon": "tbl_gen_simon",
+        "simón": "tbl_gen_simon"
+    }
+    
+    pregunta_lower = pregunta.lower()
+    tabla_objetivo = None
+    nombre_lider = None
+
+    # Buscamos si algún nombre está en la pregunta
+    for key, table_name in mapa_equipos.items():
+        if key in pregunta_lower:
+            tabla_objetivo = table_name
+            nombre_lider = key.capitalize()
+            break
+    
+    # Si no encontramos ningún nombre conocido, devolvemos None
+    if not tabla_objetivo:
+        return None
+
+    st.info(f"🔎 Buscando información del equipo de **{nombre_lider}** en base de datos OML...")
+
+    # 2. Ejecutar la consulta
+    engine_oml = get_connection_oml()
+    if not engine_oml:
+        return {"tipo": "error", "texto": "Fallo de conexión con servidor OML."}
+
+    try:
+        # Consulta directa a la tabla detectada
+        # Ordenamos por 'Orden_Visual' como se ve en la imagen 2
+        sql = f"SELECT * FROM {tabla_objetivo} ORDER BY Orden_Visual ASC"
+        
+        with engine_oml.connect() as conn:
+            df = pd.read_sql(text(sql), conn)
+        
+        if df.empty:
+            return {"texto": f"El equipo de {nombre_lider} no tiene datos registrados actualmente.", "df": None}
+
+        # 3. Preparar respuesta
+        # Nota: Devolvemos el DF para que el orquestador lo pase por tu función de estilos (Totales, etc.)
+        return {
+            "texto": f"Aquí tienes el reporte actual del **Grupo {nombre_lider}**:",
+            "df": df,
+            "origen": "oml" # Marca interna para saber de dónde vino
+        }
+
+    except Exception as e:
+        return {"tipo": "error", "texto": f"Error consultando tabla {tabla_objetivo}: {str(e)}"}
+
+
 # ============================================
 # 4) Orquestador y Validación
 # ============================================
