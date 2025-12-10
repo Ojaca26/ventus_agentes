@@ -759,6 +759,27 @@ def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
 
 def orquestador(pregunta_usuario: str, chat_history: list):
     with st.expander("⚙️ Ver Proceso de IANA", expanded=False):
+        # --- 1. REVISIÓN PRIORITARIA: ¿Es pregunta de Equipos OML? ---
+        # Esta es la línea que faltaba. Busca si la pregunta es sobre Andrés, Mateo, etc.
+        res_oml = consultar_equipo_oml(pregunta_usuario)
+        
+        if res_oml is not None:
+            st.success("✅ Intención detectada: Consulta de Equipo OML (Base Externa).")
+            
+            # Reusamos tu lógica existente de estilos para que se vea igual al resto
+            if isinstance(res_oml.get("df"), pd.DataFrame) and not res_oml["df"].empty:
+                try:
+                    # Engañamos al sistema pasando el resultado OML como si fuera SQL normal 
+                    # para aprovechar tu formateo de colores y totales
+                    res_con_estilo = interpretar_resultado_sql(res_oml)
+                    return res_con_estilo
+                except Exception as e:
+                    st.warning(f"No pude aplicar estilos avanzados: {e}")
+                    return res_oml
+            return res_oml
+
+        # --- 2. FLUJO NORMAL (Si no fue OML, sigue con Ventus BI) ---
+        # Todo esto es tu código original que ya funcionaba
         hist_text = get_history_text(chat_history)
         clasificacion = clasificar_intencion(pregunta_usuario)
         st.success(f"✅ ¡Intención detectada! Tarea: {clasificacion.upper()}.")
