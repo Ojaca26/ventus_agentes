@@ -921,33 +921,38 @@ def procesar_pregunta(prompt):
             res = orquestador(prompt, st.session_state.messages)
             st.session_state.messages.append({"role": "assistant", "content": res})
 
-            # ... (dentro de procesar_pregunta)
+            # ... (dentro de procesar_pregunta, justo después de: st.session_state.messages.append...)
 
+            # --- BLOQUE DE VISUALIZACIÓN ---
             if res and res.get("tipo") != "error":
-                # La línea 666 es esta:
-                if res.get("texto"): st.markdown(res["texto"])
+                # 1. Mostrar Texto de éxito
+                if res.get("texto"): 
+                    st.markdown(res["texto"])
 
-               # --- ⬇️ CORRECCIÓN ANTICASH ⬇️ ---
-            mostrar_raw = True
-            if res.get("styled") is not None:
-                try:
-                    st.dataframe(res["styled"])
-                    mostrar_raw = False
-                except Exception as e:
-                    # Si falla el estilo, no bloqueamos la app, solo avisamos en consola
-                    print(f"Error renderizando estilos: {e}")
-            
-            # Si falló el estilo o no había estilo, mostramos la tabla cruda
-            if mostrar_raw and isinstance(res.get("df"), pd.DataFrame) and not res["df"].empty:
-                st.dataframe(res["df"])
-            # --- ⬆️ FIN CORRECCIÓN ⬆️ ---
+                # 2. Mostrar Tabla (Con la protección anti-crash)
+                mostrar_raw = True
+                if res.get("styled") is not None:
+                    try:
+                        st.dataframe(res["styled"])
+                        mostrar_raw = False
+                    except Exception:
+                        pass # Si falla el estilo, ignoramos y pasamos al raw
+                
+                if mostrar_raw and isinstance(res.get("df"), pd.DataFrame) and not res["df"].empty:
+                    st.dataframe(res["df"])
 
+                # 3. Mostrar Análisis (si existe)
                 if res.get("analisis"):
-                     st.markdown("---"); st.markdown("### 🧠 Análisis de IANA"); st.markdown(res["analisis"])
+                     st.markdown("---")
+                     st.markdown("### 🧠 Análisis de IANA")
+                     st.markdown(res["analisis"])
                      st.toast("Análisis generado ✅", icon="✅")
-            elif res: # <-- El error también podría estar en la indentación de esta línea
+
+            # 🛑 AQUÍ ESTÁ LA CORRECCIÓN CLAVE: TIENE QUE SER 'elif', NO 'if'
+            elif res: 
                  st.error(res.get("texto", "Ocurrió un error inesperado."))
                  st.toast("Hubo un error ❌", icon="❌")
+
                  
 # Contenedor para los inputs
 input_container = st.container()
