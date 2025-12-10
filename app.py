@@ -778,7 +778,10 @@ Clasificación:
         return "consulta"
 
 def obtener_datos_sql(pregunta_usuario: str, hist_text: str) -> dict:
-    if any(keyword in pregunta_usuario.lower() for keyword in ["anterior", "esos datos", "esa tabla"]):
+    # Agregamos 'analisis', 'analiza', 'analizalo' para que recupere la tabla anterior
+    keywords_memoria = ["anterior", "esos datos", "esa tabla", "analisis", "analiza", "analízalo", "analizalo"]
+    
+    if any(keyword in pregunta_usuario.lower() for keyword in keywords_memoria):
         for msg in reversed(st.session_state.get('messages', [])):
             if msg.get('role') == 'assistant':
                 content = msg.get('content', {}); df_prev = content.get('df')
@@ -924,14 +927,20 @@ def procesar_pregunta(prompt):
                 # La línea 666 es esta:
                 if res.get("texto"): st.markdown(res["texto"])
 
-            # --- ⬇️ INICIO DE LA MODIFICACIÓN ⬇️ ---
-            # Revisa si existe la versión "styled" (con formato)
-                if res.get("styled") is not None:
+               # --- ⬇️ CORRECCIÓN ANTICASH ⬇️ ---
+            mostrar_raw = True
+            if res.get("styled") is not None:
+                try:
                     st.dataframe(res["styled"])
-            # Si no, muestra la versión "cruda" (df)
-                elif isinstance(res.get("df"), pd.DataFrame) and not res["df"].empty:
-                    st.dataframe(res["df"])
-            # --- ⬆️ FIN DE LA MODIFICACIÓN ⬆️ ---
+                    mostrar_raw = False
+                except Exception as e:
+                    # Si falla el estilo, no bloqueamos la app, solo avisamos en consola
+                    print(f"Error renderizando estilos: {e}")
+            
+            # Si falló el estilo o no había estilo, mostramos la tabla cruda
+            if mostrar_raw and isinstance(res.get("df"), pd.DataFrame) and not res["df"].empty:
+                st.dataframe(res["df"])
+            # --- ⬆️ FIN CORRECCIÓN ⬆️ ---
 
                 if res.get("analisis"):
                      st.markdown("---"); st.markdown("### 🧠 Análisis de IANA"); st.markdown(res["analisis"])
