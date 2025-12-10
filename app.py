@@ -658,22 +658,55 @@ def get_connection_oml():
 
 def consultar_equipo_oml(pregunta: str):
     """
-    Detecta el nombre del líder en la pregunta y consulta su tabla específica.
+    Detecta líderes específicos o la palabra 'todos' para consultar OML.
     """
-    # 1. Mapeo: Nombre en la pregunta -> Nombre de la tabla real
-    # Según la imagen 1, las tablas son: tbl_gen_andres, tbl_gen_camilo, etc.
     mapa_equipos = {
-        "andres": "tbl_gen_andres",
-        "andrés": "tbl_gen_andres", # Por si ponen tilde
-        "camilo": "tbl_gen_camilo",
-        "maira": "tbl_gen_maira",
-        "mayra": "tbl_gen_maira",   # Por si escriben mal
-        "mateo": "tbl_gen_mateo",
-        "simon": "tbl_gen_simon",
-        "simón": "tbl_gen_simon"
+        "andres": "tbl_gen_andres", "andrés": "tbl_gen_andres", "staff 1": "tbl_gen_andres", "grupo 1": "tbl_gen_andres",
+        "camilo": "tbl_gen_camilo", "staff 2": "tbl_gen_camilo", "grupo 2": "tbl_gen_camilo",
+        "maira": "tbl_gen_maira", "mayra": "tbl_gen_maira", "staf 3": "tbl_gen_maira", "grupo 3": "tbl_gen_maira",
+        "mateo": "tbl_gen_mateo", "staff 4": "tbl_gen_mateo", "grupo 4": "tbl_gen_mateo",
+        "simon": "tbl_gen_simon", "simón": "tbl_gen_simon", "staff 5": "tbl_gen_simon", "grupo 5": "tbl_gen_simon"
     }
-    
+
     pregunta_lower = pregunta.lower()
+    
+    # --- LÓGICA OPCIÓN A: VER TODOS ---
+    keywords_todos = ["todos", "general", "global", "resumen de equipos", "toda la flota"]
+    if any(k in pregunta_lower for k in keywords_todos):
+        st.info("🔎 Recopilando información de TODOS los equipos OML...")
+        engine_oml = get_connection_oml()
+        if not engine_oml: return None
+        
+        tablas_unicas = list(set(mapa_equipos.values())) # Evitamos duplicados
+        dfs = []
+        
+        try:
+            with engine_oml.connect() as conn:
+                for tabla in tablas_unicas:
+                    try:
+                        sql = f"SELECT * FROM {tabla}"
+                        df_temp = pd.read_sql(text(sql), conn)
+                        if not df_temp.empty:
+                            dfs.append(df_temp)
+                    except Exception:
+                        continue # Si falla una tabla, seguimos con las otras
+            
+            if dfs:
+                df_final = pd.concat(dfs, ignore_index=True)
+                # Ordenamos por Líder para que se vea ordenado
+                if "Lider" in df_final.columns:
+                    df_final = df_final.sort_values(by="Lider")
+                return {
+                    "texto": "Aquí tienes el consolidado de **todos los equipos**:",
+                    "df": df_final,
+                    "origen": "oml"
+                }
+            else:
+                return {"texto": "No encontré datos en ninguna tabla de equipos.", "df": None}
+        except Exception as e:
+             return {"tipo": "error", "texto": f"Error general consultando todos: {e}"}
+
+    # --- LÓGICA ORIGINAL: UN SOLO LÍDER ---
     tabla_objetivo = None
     nombre_lider = None
 
